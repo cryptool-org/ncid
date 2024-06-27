@@ -4,7 +4,9 @@ A neural network to detect and analyze ciphers from historical texts.
 
 # NCID- Neural Cipher IDentifier
 
-This project contains code for the detection and classification of ciphers to classical algorithms by using a neural network. In Future other parts of the cryptanalysis will be implemented. An online version of the neural networks will be officially published on https://www.cryptool.org/ncid.
+This project contains code for the detection and classification of ciphers to classical algorithms by using a neural network. In the future other parts of the cryptanalysis will be implemented. An online version of the neural networks will be officially published on https://www.cryptool.org/en/cto/ncid.
+
+While the project was focused on ACA ciphers at first, a later extension added the possibility to detect the rotor ciphers Enigma, M209, Purple, Sigaba, and Typex.
 
 # License
 
@@ -16,7 +18,7 @@ Publications on websites and the like MUST be explicitly allowed by the author. 
 
 - Clone this repository and enter it:
   ```Shell
-  git clone https://github.com/dITySoftware/ncid
+  git clone git@github.com:cryptool-org/ncid.git
   cd ncid
   ```
 
@@ -44,9 +46,11 @@ The `generatePlainTextFiles.py` script automatically unpacks the zips, with the 
 python3 generatePlainTextFiles.py --directory=../gutenberg_en --restructure_directory=true
 ```
 
-## Generate Ciphertexts (Optional)
+## Generate ACA Ciphertexts (Optional)
 
-You might want to predict with one or more models by using the same ciphertext files. The `generateCipherTextFiles.py` script encrypts plaintext files to multiple ciphertext files. The naming convention is *fileName-cipherType-minLenXXX-maxLenXXX-keyLenXX.txt*. This script generates ciphertexts out of plaintexts. If a line is not long enough it is concatenated with the next line. If a line is too long it is sliced into max_text_len length. For further description read the help by using the `--help` parameter. Example usage:
+You might want to predict with one or more models by using the same ciphertext files. The `generateCipherTextFiles.py` script encrypts plaintext files to multiple ciphertext files. The naming convention is *fileName-cipherType-minLenXXX-maxLenXXX-keyLenXX.txt*. This script generates ciphertexts out of plaintexts. **Beware:** Currently only ACA ciphertexts can be generated. To generate ciphertexts for rotor ciphers, an external tool (like CrypTool 2) has to be used. 
+
+If a line is not long enough it is concatenated with the next line. If a line is too long it is sliced into max_text_len length. For further description read the help by using the `--help` parameter. Example usage:
 
 ```
 python3 generateCipherTextFiles.py --min_text_len=100 --max_text_len=100 --max_files_count=100
@@ -62,11 +66,7 @@ python3 generateCalculatedFeatures.py --dataset_workers=50 --min_len=100 --max_l
 
 # Evaluation
 
-Here are our NCID models for all ACA ciphers and texts with exact length of 100. (released on March 20th, 2021): [models100.zip](https://drive.google.com/file/d/1mOzo_g997oQf367vt6rNjmwvQ3cB8dsc/view?usp=sharing)
-
-Here are our NCID models for the ACA ciphers amsco, bazeries, beaufort, bifid, cmbifid, digrafid, foursquare, fractionated_morse, gromark, gronsfeld, homophonic, monome_dinome, morbit, myszkowski, nicodemus, nihilist_substitution, periodic_gromark, phillips, playfair, pollux, porta, portax, progressive_key, quagmire2, quagmire3, quagmire4, ragbaby, redefence, seriated_playfair, slidefair, swagman, tridigital, trifid, tri_square, two_square, vigenere and texts with the lengths of 51-428. (released on March 20th, 2021): [aca_models428.zip](https://drive.google.com/file/d/1nApGcUfx0T0Q6qIDw2YgiPdMHVGD3Npd/view?usp=sharing)
-
-There are multiple ways to evaluate the model. First of all it is needed to put the corresponding model file in the `../data/models` directory and run one of the following commands:
+There are multiple ways to evaluate the models. First of all it is needed to put the corresponding model file in the `../data/models` directory and run one of the following commands:
 
 - **benchmark** - Use this argument to create ciphertexts on the fly, like in training mode, and evaluate them with the model. This option is optimized for large throughput to test the model. Example usages:
 
@@ -75,7 +75,7 @@ There are multiple ways to evaluate the model. First of all it is needed to put 
   ```
 
   ```
-  python3 eval.py --architecture=Ensemble --models ../data/models/t128_ffnn_final_100.h5 ../data/models/t129_lstm_final_100.h5 ../data/models/t128_nb_final_100.h5 ../data/models/t99_rf_final_100.h5 ../data/models/t96_transformer_final_100.h5 --architectures FFNN LSTM NB RF Transformer --strategy=weighted --batch_size=512 --max_iter=1000000 --dataset_size=64960 benchmark --dataset_workers=10 --min_text_len=100 --max_text_len=100 > ../data/benchmark.txt 2> ../data/err_benchmark.txt
+  python3 eval.py --architecture=Ensemble --models=../data/models/t128_ffnn_final_100.h5 --models=../data/models/t129_lstm_final_100.h5 --models=../data/models/t128_nb_final_100.h5 --models=../data/models/t99_rf_final_100.h5 --models=../data/models/t96_transformer_final_100.h5 --architectures=FFNN --architectures=LSTM --architectures=NB --architectures=RF --architectures=Transformer --strategy=weighted --batch_size=512 --max_iter=1000000 --dataset_size=64960 benchmark --dataset_workers=10 --min_text_len=100 --max_text_len=100 > ../data/benchmark.txt 2> ../data/err_benchmark.txt
   ```
 
 - **evaluate** - Use this argument to evaluate cipher types for directories with ciphertext files in it. There are two *evaluation_modes*: 
@@ -91,7 +91,7 @@ There are multiple ways to evaluate the model. First of all it is needed to put 
   ```
 
   ```
-  python3 eval.py --architecture=Ensemble --models ../data/models/t128_ffnn_final_100.h5 ../data/models/t129_lstm_final_100.h5 ../data/models/t128_nb_final_100.h5 ../data/models/t99_rf_final_100.h5 ../data/models/t96_transformer_final_100.h5 --architectures FFNN LSTM NB RF Transformer --strategy=weighted --batch_size=512 --dataset_size=64960 --max_iter=10000000 evaluate --data_folder=../data/generated_data --evaluation_mode=per_file > ../data/eval.txt 2> ../data/err_eval.txt
+  python3 eval.py --architecture=Ensemble --models=../data/models/t128_ffnn_final_100.h5 --models=../data/models/t129_lstm_final_100.h5 --models=../data/models/t128_nb_final_100.h5 --models=../data/models/t99_rf_final_100.h5 --models=../data/models/t96_transformer_final_100.h5 --architectures=FFNN --architectures=LSTM --architectures=NB --architectures=RF --architectures=Transformer --strategy=weighted --batch_size=512 --dataset_size=64960 --max_iter=10000000 evaluate --data_folder=../data/generated_data --evaluation_mode=per_file > ../data/eval.txt 2> ../data/err_eval.txt
   ```
 
 - **single_line** - Use this argument to predict a single line of ciphertext. The difference of this command is, that in contrast to the other modes, the results are predicted without knowledge of the real cipher type. There are two types of data this command can process:
@@ -103,7 +103,7 @@ There are multiple ways to evaluate the model. First of all it is needed to put 
   ```
 
   ```
-  python3 eval.py --architecture=Ensemble --models ../data/models/t128_ffnn_final_100.h5 ../data/models/t129_lstm_final_100.h5 ../data/models/t128_nb_final_100.h5 ../data/models/t99_rf_final_100.h5 ../data/models/t96_transformer_final_100.h5 --architectures FFNN LSTM NB RF Transformer --strategy=weighted --batch_size=512 single_line --file=../data/generated_data/aca_features.txt --verbose=False > weights/../data/predict.txt 2> weights/err_predict.txt
+  python3 eval.py --architecture=Ensemble --models=../data/models/t128_ffnn_final_100.h5 --models=../data/models/t129_lstm_final_100.h5 --models=../data/models/t128_nb_final_100.h5 --models=../data/models/t99_rf_final_100.h5 --models=../data/models/t96_transformer_final_100.h5 --architectures=FFNN --architectures=LSTM --architectures=NB --architectures=RF --architectures=Transformer --strategy=weighted --batch_size=512 single_line --file=../data/generated_data/aca_features.txt --verbose=False > weights/../data/predict.txt 2> weights/err_predict.txt
   ```
 
   - *file* - A file with mixed lines of ciphertext to be predicted line by line by the model. Example usages:
@@ -120,7 +120,7 @@ python3 eval.py --help
 
 # Training
 
-By default we train the models to identify ACA ciphers listed [here](https://www.cryptogram.org/resource-area/cipher-types/). The plaintexts used are already filtered and automatically downloaded in the train.py or eval.py scripts.  You can turn off this behavior by setting `--download_dataset=False`. 
+By default we train the models to identify ACA ciphers listed [here](https://www.cryptogram.org/resource-area/cipher-types/), as well as 5 rotor ciphers: Enigma, M209, Purple, Sigaba, and Typex. The plaintexts used are already filtered and automatically downloaded in the train.py or eval.py scripts.  You can turn off this behavior by setting `--download_dataset=False`. The rotor ciphers need pre-generated ciphertexts to work. These can be generated with CrypTool 2. To limit the cipher types to train, the option `--ciphers` can be set to `aca`, `rotor` or `all`, e.g.
 
 To see all options of `train.py`, run the `--help` or `-h` command.
 
@@ -177,6 +177,8 @@ python3 -m unittest unit/cipherTypeDetection/textLine2CipherStatisticsDataset.py
 
 # Qualitative Results
 
+## Original models trained for recognition of ACA ciphers
+
 Following are our training results from a DGX-1 with 2 GPUs on the models with length 100 and 6 GPUs on models with length 51-428. Models are differentiated into feature-engineering (FFNN, RF and NB) and feature-extracting (LSTM and Transformer) models. Models are evaluated with a dataset of 10 million self generated records.
 
 | Model Name                    | Accuracy in % | Iterations in Mio. | Training Time |
@@ -187,14 +189,34 @@ Following are our training results from a DGX-1 with 2 GPUs on the models with l
 | t128_nb_final_100             |     52.79     |        181         |  7d 11h 14m   |
 | t129_lstm_final_100           |     72.16     |        162         |  2d 21h 31m   |
 | ensemble_mean_100             |     82.67     |         -          |       -       |
-| ensemble_weighted_100          |     82.78     |         -          |       -       |
+| ensemble_weighted_100         |     82.78     |         -          |       -       |
 | t142_final_aca428_ffnn        |     67.43     |        100         |   4d 5h 17m   |
 | t145_transformer_final_aca428 |     59.54     |        114         |     8h 8m     |
 | t144_rf_final_aca428          |     59.15     |        2.5         |    3h 18m     |
 | t142_final_aca428_nb          |     50.71     |        100         |   4d 5h 17m   |
-| t143_lstm_final_aca428        |     63.41     |        89         |     9h 6m     |
+| t143_lstm_final_aca428        |     63.41     |         89         |     9h 6m     |
 | ensemble_mean428              |     70.79     |         -          |       -       |
 | ensemble_weighted428          |     70.78     |         -          |       -       |
+
+## Extended models trained for recognition of ACA and rotor ciphers
+
+The models are trained on variable length ciphertexts in between 100 and 1000 characters. This was done to improve the recognition of the models towards rotor ciphers. For resonable recognitions of rotor ciphers longer ciphertexts are needed.
+
+| Model Name                    | Accuracy in % | Iterations in Mio. |
+| :---------------------------- | :-----------: | :----------------: |
+| transformer_var_10000000      |     67.54     |         10         |
+| rf_var_1000000                |     74.12     |          1         |
+| lstm_var_10000000             |     66.40     |         10         |
+| nb_var_10000000               |     53.50     |         10         |
+| ffnn_var_10000000             |     72.98     |         10         |
+
+These models are always part of an ensemble model with a SVM trained only on rotor ciphers. When the main models recognize rotor ciphers, the SVM is used to differentiate
+between the rotor ciphers. This helps with the results since the original models can differentiate between ACA and rotor ciphers but are bad at differentiating rotor ciphers from each other.
+
+| Model Name                    | Accuracy in % | Iterations in Mio. | Training Time |
+| :---------------------------- | :-----------: | :----------------: | :-----------: |
+| svm_rotor_only_1000_16000     |     61.50     |       0.016        |  0d 01h 01m   |
+
 
 # Publications
 

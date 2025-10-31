@@ -206,7 +206,7 @@ Following are our training results from a DGX-1 with 2 GPUs on the models with l
 
 ## Extended models trained for recognition of ACA and rotor ciphers
 
-The models are trained on variable length ciphertexts in between 100 and 1000 characters. This was done to improve the recognition of the models towards rotor ciphers. For resonable recognitions of rotor ciphers longer ciphertexts are needed.
+The extended models are trained with ciphertexts of variable length in between 100 and 1000 characters. The usage of variable length ciphertexts helps the recognition of the rotor ciphers, as the longer ciphertexts include more distinct features. 
 
 | Model Name                    | Accuracy in % | Iterations in Mio. |
 | :---------------------------- | :-----------: | :----------------: |
@@ -216,8 +216,7 @@ The models are trained on variable length ciphertexts in between 100 and 1000 ch
 | nb_var_10000000               |     53.50     |         10         |
 | ffnn_var_10000000             |     72.98     |         10         |
 
-These models are always part of an ensemble model with a SVM trained only on rotor ciphers. When the main models recognize rotor ciphers, the SVM is used to differentiate
-between the rotor ciphers. This helps with the results since the original models can differentiate between ACA and rotor ciphers but are bad at differentiating rotor ciphers from each other.
+These models are always part of an ensemble model augmented by an SVM that is trained only on rotor ciphers. When the main models recognizes a rotor cipher, the SVM is used to differentiate between the five types of rotor ciphers. This improves the results, as the original models are quite good in distinguishing between ACA and rotor ciphers but have issues differentiating the rotor ciphers from each other.
 
 | Model Name                    | Accuracy in % | Iterations in Mio. | Training Time |
 | :---------------------------- | :-----------: | :----------------: | :-----------: |

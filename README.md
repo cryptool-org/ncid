@@ -222,6 +222,29 @@ These models are always part of an ensemble model augmented by an SVM that is tr
 | :---------------------------- | :-----------: | :----------------: | :-----------: |
 | svm_rotor_only_1000_16000     |     61.50     |       0.016        |  0d 01h 01m   |
 
+## Arguments used for training
+
+The following arguments were used to train these models:
+
+```
+python train.py --architecture=FFNN
+    --download_dataset=False \
+    --plaintext_input_directory=../data/gutenberg_en \
+    --rotor_input_directory=../data/rotor_ciphertexts \
+    --train_dataset_size=976 \
+    --dataset_workers=16 \
+    --batch_size=64 \
+    --max_iter=10000000 \
+    --min_train_len=100 \
+    --max_train_len=1000 \
+    --min_test_len=100 \
+    --max_test_len=1000 \
+    --epochs=1 \
+    --ciphers=all
+```
+
+were the argument 'FFNN' can be replaced by the actual architecture to train. Attention: `max_iter` is set to `1000000` when the RF model is trained.
+
 
 # Publications
 

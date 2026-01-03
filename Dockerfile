@@ -1,14 +1,14 @@
 # base python image version
-ARG PYTHON_VERSION=3.11-slim-bookworm
+ARG PYTHON_VERSION=3.11-slim-trixie
 
 
 # base image
 # ============
-FROM python:${PYTHON_VERSION} as base
+FROM python:${PYTHON_VERSION} AS base
 
 # configure python
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 # setup virtualenv
 ENV VIRTUAL_ENV=/opt/venv
@@ -17,7 +17,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # build image
 # =============
-FROM base as build-image
+FROM base AS build-image
 
 # install dependencies
 COPY requirements.txt /opt/requirements.txt
@@ -31,7 +31,7 @@ RUN set -ex \
 
 # api image
 # ======================
-FROM base as api
+FROM base AS api
 
 EXPOSE 4343
 

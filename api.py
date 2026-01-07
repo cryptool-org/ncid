@@ -135,7 +135,7 @@ async def exception_handler(request, exc):
 
 @app.get("/get_available_architectures", response_model=APIResponse)
 async def get_available_architectures():
-    visible_models = [model for model in list(models.keys()) if model is not "Rotor-SVM"]
+    visible_models = [model for model in list(models.keys()) if model != "Rotor-SVM"]
     return {"success": True, "payload": visible_models}
     
 @app.get("/evaluate/single_line/ciphertext", response_model=APIResponse)

@@ -452,7 +452,7 @@ class PlaintextPathsDataset:
 
         key_lengths_count = 0
         for cipher_t in self._cipher_types:
-            index = self._cipher_types.index(cipher_t)
+            index = config.CIPHER_TYPES.index(cipher_t)
             if isinstance(config.KEY_LENGTHS[index], list):
                 key_lengths_count += len(config.KEY_LENGTHS[index])
             else:
@@ -610,15 +610,14 @@ class PlaintextLine2CipherStatisticsWorker:
 
         for line in plaintexts:
             for cipher_type in self._cipher_types:
-                index = config.cipher_types.index(cipher_type)
-                label = self._cipher_types.index(cipher_type)
+                label = config.cipher_types.index(cipher_type)
                 if isinstance(config.key_lengths[label], list):
                     key_lengths = config.key_lengths[label]
                 else:
                     key_lengths = [config.key_lengths[label]]
                 for key_length in key_lengths:
                     try:
-                        ciphertext = encrypt(line, index, key_length, self._keep_unknown_symbols)
+                        ciphertext = encrypt(line, label, key_length, self._keep_unknown_symbols)
                     except:
                         multiprocessing_logger.error(f"Could not encrypt line with cipher "
                                                      f"'{cipher_type}'. and key length {key_length}. "

@@ -485,8 +485,7 @@ def load_plaintext_datasets_from_disk(args, requested_cipher_types, batch_size):
         `CipherStatisticsDataset`s for training and testing.
     """
     # Filter cipher_types to exclude non-plaintext ciphers
-    aca_cipher_types = [config.CIPHER_TYPES[i] for i in range(56)]
-    cipher_types = [type for type in requested_cipher_types if type in aca_cipher_types]
+    cipher_types = [type for type in requested_cipher_types if type not in config.ROTOR_CIPHER_TYPES]
 
     # Get all paths to plaintext files in the `plaintext_input_directory`
     plaintext_files = []

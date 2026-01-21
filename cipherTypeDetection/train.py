@@ -1030,8 +1030,7 @@ def expand_cipher_groups(cipher_types):
             expanded.append(config.CIPHER_TYPES[i])
     elif config.ALL in expanded:
         del expanded[expanded.index(config.ALL)]
-        for i in range(61):
-            expanded.append(config.CIPHER_TYPES[i])
+        expanded.extend(config.CIPHER_TYPES)
     return expanded
 
 def main():

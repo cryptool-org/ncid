@@ -362,7 +362,7 @@ class RotorCiphertextsDataset:
     @property
     def is_initialized(self):
         """Indicates whether the dataset was initialized with input data."""
-        return self._number_of_cipher_classes != 0
+        return self._number_of_cipher_classes != 0 and self._batch_size > 0
     
     def _are_files_closed(self):
         """Returns True if at least one ciphertext file is closed."""
@@ -472,7 +472,7 @@ class PlaintextPathsDataset:
     @property
     def is_initialized(self):
         """Indicates whether the dataset was initialized with input data."""
-        return len(self._plaintext_paths) != 0 and len(self._cipher_types) != 0
+        return len(self._plaintext_paths) != 0 and len(self._cipher_types) != 0 and self._batch_size > 0
 
     def __iter__(self):
         return self

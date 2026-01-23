@@ -10,6 +10,15 @@ import os
 import math
 import pickle
 import functools
+
+# PyTorch
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchinfo import summary
+import numpy as np
+from torch.utils.data import TensorDataset, DataLoader
+
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier, plot_tree
@@ -27,6 +36,7 @@ from tensorflow.keras.metrics import SparseTopKCategoricalAccuracy
 from tensorflow.keras.optimizers import Adam  # , Adamax
 import tensorflow_datasets as tfds
 sys.path.append("../")
+from util.utils import get_pytorch_device
 from cipherTypeDetection.nullDistributionStrategy import NullDistributionStrategy
 import cipherTypeDetection.config as config
 from cipherTypeDetection.trainingBatch import TrainingBatch
@@ -35,45 +45,227 @@ from cipherTypeDetection.predictionPerformanceMetrics import PredictionPerforman
 from cipherTypeDetection.miniBatchEarlyStoppingCallback import MiniBatchEarlyStopping
 from cipherTypeDetection.transformer import TransformerBlock, TokenAndPositionEmbedding
 from cipherTypeDetection.learningRateSchedulers import TimeBasedDecayLearningRateScheduler, CustomStepDecayLearningRateScheduler
+from cipherTypeDetection.models.ffnn import FFNN
+from cipherTypeDetection.models.lstm import LSTM
+from cipherTypeDetection.config import Backend
+
 tf.debugging.set_log_device_placement(enabled=False)
 # always flush after print as some architectures like RF need very long time before printing anything.
 print = functools.partial(print, flush=True)
 for device in tf.config.list_physical_devices('GPU'):
     tf.config.experimental.set_memory_growth(device, True)
+      
+def train_torch(model, args, train_ds, feature_engineering):
+    device = get_pytorch_device()
+    if device.type == "cpu":
+        print("WARNING: Using CPU for training!")
+    model.to(device)
+
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=config.learning_rate,
+        betas=(config.beta_1, config.beta_2),
+        eps=config.epsilon,
+        amsgrad=config.amsgrad
+    )
+    criterion = nn.CrossEntropyLoss()
+    model.train()
+
+    best_val_acc = 0
+    patience_counter = 0
+    patience_limit = 250
+
+    train_iter = 0
+    train_epoch = 0
+    start_time = time.time()
+
+    val_data_created = False
+    x_val = y_val = None
+
+    for epoch in range(args.epochs):
+        while train_ds.iteration < args.max_iter:
+            training_batches = next(train_ds)
+            for training_batch in training_batches:
+                statistics, labels = training_batch.items()
+                statistics = statistics.numpy()
+                labels = labels.numpy()
+                if not feature_engineering:
+                    statistics = statistics.astype(int)
+                
+                if not val_data_created:
+                    x_train_np, x_val_np, y_train_np, y_val_np = train_test_split(
+                        statistics, labels, test_size=0.3
+                    )
+                    x_val = torch.tensor(x_val_np, dtype=torch.float32).to(device)
+                    if not feature_engineering:
+                        x_val = x_val.int()
+                    y_val = torch.tensor(y_val_np, dtype=torch.long).to(device)
+                    val_data_created = True
+                else:
+                    x_train_np = statistics
+                    y_train_np = labels
+
+                # Use DataLoader for creating minibatch
+                x_train = torch.tensor(x_train_np, dtype=torch.float32, device=device)
+                if not feature_engineering:
+                    x_train = x_train.int()
+                y_train = torch.tensor(y_train_np, dtype=torch.long, device=device)
+
+                train_dataset = TensorDataset(x_train, y_train)
+                train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+
+                batch_losses = []
+
+                for x_batch, y_batch in train_loader:
+                    x_batch = x_batch.to(device)
+                    y_batch = y_batch.to(device)
+
+                    optimizer.zero_grad()
+                    outputs = model(x_batch)
+                    loss = criterion(outputs, y_batch)
+                    loss.backward()
+                    optimizer.step()
+
+                    batch_losses.append(loss.item())
+                    train_iter += len(y_batch)
+
+                epoch_loss = sum(batch_losses) / len(batch_losses)
+
+                # --- Validation step ---
+                model.eval()
+                with torch.no_grad():
+                    val_outputs = model(x_val)
+                    val_loss = criterion(val_outputs, y_val)
+                    val_pred = torch.argmax(val_outputs, dim=1)
+                    val_acc = (val_pred == y_val).float().mean().item()
+
+                    top3 = torch.topk(val_outputs, k=3, dim=1).indices
+                    y_val_exp = y_val.unsqueeze(1).expand_as(top3)
+                    val_k3 = (top3 == y_val_exp).any(dim=1).float().mean().item()
+
+                print(f"Epoch: {epoch+1}, Iteration: {train_iter}, "
+                      f"Train Loss: {epoch_loss:.4f}, Val Loss: {val_loss.item():.4f}, "
+                      f"Val Acc: {val_acc:.4f}, Val Top-3 Acc: {val_k3:.4f}")
+                model.train()
+
+                # --- Early stopping check ---
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience_limit:
+                        print("Early stopping triggered.")
+                        elapsed = time.time() - start_time
+                        t = time.gmtime(elapsed)
+                        print(f"Finished training in {t.tm_yday - 1} days {t.tm_hour} hours {t.tm_min} minutes {t.tm_sec} seconds with {train_iter} iterations.")
+                        class DummyEarlyStopping: stop_training = True
+                        return DummyEarlyStopping(), train_iter, f"Early stopped at epoch {epoch+1}"
+                
+                if train_iter >= args.max_iter:
+                    break
+            if train_iter >= args.max_iter:
+                break
+        train_epoch += 1
+
+    elapsed = time.time() - start_time
+    t = time.gmtime(elapsed)
+    print(f"Finished training in {t.tm_yday - 1} days {t.tm_hour} hours {t.tm_min} minutes {t.tm_sec} seconds with {train_iter} iterations.")
+    class DummyEarlyStopping: stop_training = False
+    return DummyEarlyStopping(), train_iter, f"Trained for {train_epoch} epochs"
+
+
+def predict_torch(model, args, statistics, labels, feature_engineering):
+    device = get_pytorch_device()
+    if device.type == "cpu":
+        print("WARNING: Using CPU for prediction!")
+
+    model.eval()
+    model.to(device)
+    criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        statistics = statistics.numpy()
+        x = torch.tensor(statistics, dtype=torch.float32).to(device)
+        if not feature_engineering:
+            x = x.int()
+
+        y = torch.tensor(labels.numpy(), dtype=torch.long).to(device)
+
+        outputs = model(x)
+        loss = criterion(outputs, y)
+
+        pred_top1 = torch.argmax(outputs, dim=1)
+        acc = (pred_top1 == y).float().mean().item()
+
+        top3 = torch.topk(outputs, k=3, dim=1).indices
+        y_expanded = y.unsqueeze(1).expand_as(top3)
+        k3_acc = (top3 == y_expanded).any(dim=1).float().mean().item()
+
+        print(f"Eval → Loss: {loss.item():.4f}, Accuracy: {acc:.4f}, Top-3 Accuracy: {k3_acc:.4f}")
+
+        preds = torch.softmax(outputs, dim=1).cpu().numpy()
+
+        return preds, labels.numpy()
 
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
 
-def create_model_with_distribution_strategy(architecture, extend_model, output_layer_size, max_train_len):
+def print_model_summary(architecture, model, backend, max_train_len):
+    if backend == Backend.KERAS:
+        model.summary()
+    elif backend == Backend.PYTORCH:
+        # for LSTM use a LongTensor dummy input of shape (1, max_train_len)
+        if architecture == "LSTM":
+            summary(model, input_size=(1, max_train_len), dtypes=[torch.long])
+        else:
+            summary(model, input_size=(1, 724))
+    elif backend == Backend.SCIKIT:
+        print(model)
+    else:
+        raise ValueError(f"Unknown backend {backend}")
+
+def create_model_with_distribution_strategy(architecture, backend, extend_model, output_layer_size, max_train_len):
     """Creates models depending on the GPU count and on extend_model"""
     print('Creating model...')
 
     strategy = None
-    gpu_count = (len(tf.config.list_physical_devices('GPU')) +
-        len(tf.config.list_physical_devices('XLA_GPU')))
-    if gpu_count > 1:
-        print("Multiple GPUs found.")
-        strategy = tf.distribute.MirroredStrategy()
-        print(f"Number of mirrored devices: {strategy.num_replicas_in_sync}.")
-        with strategy.scope():
+
+    # Skip Keras specific creation of a distribution strategy. For now scikit-learn models
+    # are learned on the CPU and PyTorch models can be trained with upto one GPU.
+    # To support multiple GPUs with PyTorch a bigger reorganization of the codebase 
+    # would be neccessary. The PyTorch `DistributedDataParallel` library needs to launch
+    # multiple, independent instances of the training script.
+    if backend == Backend.PYTORCH or backend == Backend.SCIKIT:
+        return create_model(architecture, extend_model, output_layer_size, max_train_len), strategy
+    else:
+        gpu_count = (len(tf.config.list_physical_devices('GPU')) +
+            len(tf.config.list_physical_devices('XLA_GPU')))
+        if gpu_count > 1:
+            print("Multiple GPUs found.")
+            strategy = tf.distribute.MirroredStrategy()
+            print(f"Number of mirrored devices: {strategy.num_replicas_in_sync}.")
+            with strategy.scope():
+                if extend_model is not None:
+                    extend_model = tf.keras.models.load_model(extend_model, compile=False)
+                model = create_model(architecture, extend_model, output_layer_size, max_train_len)
+            if architecture in ("FFNN", "CNN", "LSTM", "Transformer") and extend_model is None:
+                print_model_summary(architecture, model, backend, max_train_len)
+
+        else:
+            print("Only one GPU found.")
+            strategy = NullDistributionStrategy()
             if extend_model is not None:
                 extend_model = tf.keras.models.load_model(extend_model, compile=False)
             model = create_model(architecture, extend_model, output_layer_size, max_train_len)
-        if architecture in ("FFNN", "CNN", "LSTM", "Transformer") and extend_model is None:
-            model.summary()
-    else:
-        print("Only one GPU found.")
-        strategy = NullDistributionStrategy()
-        if extend_model is not None:
-            extend_model = tf.keras.models.load_model(extend_model, compile=False)
-        model = create_model(architecture, extend_model, output_layer_size, max_train_len)
-        if architecture in ("FFNN", "CNN", "LSTM", "Transformer") and extend_model is None:
-            model.summary()
+            if architecture in ("FFNN", "CNN", "LSTM", "Transformer") and extend_model is None:
+                print_model_summary(architecture, model, backend, max_train_len)
 
-    print('Model created.\n')
-    return model, strategy
+
+        print('Model created.\n')
+        return model, strategy
 
 def create_model(architecture, extend_model, output_layer_size, max_train_len):
     """
@@ -115,13 +307,13 @@ def create_model(architecture, extend_model, output_layer_size, max_train_len):
     
     # Create new model based on architecture
     if architecture == "FFNN":
-        model = tf.keras.Sequential()
-        model.add(tf.keras.layers.Input(shape=(input_layer_size,)))
-        for _ in range(config.hidden_layers):
-            model.add(tf.keras.layers.Dense(hidden_layer_size, activation='relu', use_bias=True))
-        model.add(tf.keras.layers.Dense(output_layer_size, activation='softmax'))
-        model.compile(optimizer=optimizer, loss="sparse_categorical_crossentropy", 
-                    metrics=["accuracy", SparseTopKCategoricalAccuracy(k=3, name="k3_accuracy")])
+        # Use PyTorch for FFNN
+        model = FFNN(
+            input_size=input_layer_size,
+            hidden_size=hidden_layer_size,
+            output_size=output_layer_size,
+            num_hidden_layers=config.hidden_layers
+        )
         return model
     
     elif architecture == "CNN":
@@ -144,16 +336,16 @@ def create_model(architecture, extend_model, output_layer_size, max_train_len):
     elif architecture == "LSTM":
         config.FEATURE_ENGINEERING = False
         config.PAD_INPUT = True
-        model = tf.keras.Sequential()
-        model.add(tf.keras.layers.Embedding(56, 64, input_length=max_train_len))
-        # model_.add(tf.keras.layers.Dropout(0.2))
-        model.add(tf.keras.layers.LSTM(config.lstm_units))
-        # model_.add(tf.keras.layers.Dropout(0.2))
-        model.add(tf.keras.layers.Flatten())
-        model.add(tf.keras.layers.Dense(output_layer_size, activation='softmax'))
-        model.compile(optimizer=optimizer, loss="sparse_categorical_crossentropy", 
-                    metrics=["accuracy", SparseTopKCategoricalAccuracy(k=3, name="k3_accuracy")])
+        model = LSTM(
+            vocab_size=56,
+            embed_dim=64,
+            hidden_size=config.lstm_units,
+            output_size=output_layer_size,
+            num_layers=1,
+            dropout=0.0
+        )
         return model
+
     
     elif architecture == "DT":
         return DecisionTreeClassifier(criterion=config.criterion, ccp_alpha=config.ccp_alpha)
@@ -263,8 +455,10 @@ def parse_arguments():
                         help='Directory for saving generated models. \n'
                              'When interrupting, the current model is \n'
                              'saved as interrupted_...')
-    parser.add_argument('--model_name', default='m.h5', type=str,
-                        help='Name of the output model file. The file must \nhave the .h5 extension.')
+    parser.add_argument('--model_name', type=str,
+                        help='Name of the output model file. The file must \n'
+                             'have the .h5 or .pth extension for Keras models or \n'
+                             'PyTorch models, respectively.')
     parser.add_argument('--ciphers', default='all', type=str,
                         help='A comma seperated list of the ciphers to be created.\n'
                              'Be careful to not use spaces or use \' to define the string.\n'
@@ -805,23 +999,40 @@ def train_model(model, strategy, args, train_ds):
     print(training_stats)
     return early_stopping_callback, train_iter, training_stats
         
-def save_model(model, args):
+def save_model(model, args, backend):
     """Writes the model and the commandline arguments to disk."""
-
     print('Saving model...')
     architecture = args.architecture
+
     if not os.path.exists(args.save_directory):
         os.mkdir(args.save_directory)
-    if args.model_name == 'm.h5':
-        i = 1
-        while os.path.exists(os.path.join(args.save_directory, args.model_name.split('.')[0] + str(i) + '.h5')):
-            i += 1
-        model_name = args.model_name.split('.')[0] + str(i) + '.h5'
-    else:
-        model_name = args.model_name
+
+    model_name = args.model_name
+    if backend == Backend.PYTORCH and not model_name.endswith(".pth"):
+        model_name = model_name + '.pth'
+
     model_path = os.path.join(args.save_directory, model_name)
 
-    if architecture in ("FFNN", "CNN", "LSTM", "Transformer"):
+    if architecture in ("FFNN", "LSTM"):
+        state_dict = {
+            'model_state_dict': model.state_dict(),
+            'hidden_size': model.hidden_size,
+            'output_size': model.output_size,
+        }
+
+        if architecture == "FFNN":
+            state_dict['input_size'] = model.input_size
+            state_dict['num_hidden_layers'] = model.num_hidden_layers
+        elif architecture == "LSTM":
+            state_dict['vocab_size'] = model.vocab_size
+            state_dict['embed_dim'] = model.embed_dim
+            state_dict['num_layers'] = model.num_layers
+            state_dict['dropout'] = model.dropout
+
+        torch.save(state_dict, model_path)
+
+
+    elif architecture in ("CNN", "Transformer"):
         model.save(model_path)
 
     elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN", "SVM-Rotor"):
@@ -836,29 +1047,31 @@ def save_model(model, args):
             pickle.dump(model[1], f)
 
     elif architecture == "[DT,ET,RF,SVM,kNN]":
-        for index, name in enumerate(["dt","et","rf","svm","knn"]):
+        for index, name in enumerate(["dt", "et", "rf", "svm", "knn"]):
             # TODO: Are these files actually in the h5 format? Probably not!
             with open('../data/models/' + model_path.split('.')[0] + f"_{name}.h5", "wb") as f:
                 # this gets very large
                 pickle.dump(model[index], f)
-
-    # Write user provided commandline arguments into mode path
+    
+    # Write user provided commandline arguments into model path
     with open('../data/' + model_path.split('.')[0] + '_parameters.txt', 'w') as f:
         for arg in vars(args):
             f.write("{:23s}= {:s}\n".format(arg, str(getattr(args, arg))))
 
-    # Remove logs of previous run
-    if architecture in ("FFNN", "CNN", "LSTM", "Transformer"):
+    # Managing logs
+    if architecture in ("CNN", "Transformer"):
         logs_destination = '../data/' + model_name.split('.')[0] + '_tensorboard_logs'
         try:
-            if os.path.exists(logs_destination):
-                shutil.rmtree(logs_destination)
-            shutil.move('../data/logs', logs_destination)
+            if os.path.exists('../data/logs'):
+                if os.path.exists(logs_destination):
+                    shutil.rmtree(logs_destination)
+                shutil.move('../data/logs', logs_destination)
         except Exception:
-            print(f"Could not remove logs of previous run. Move of current logs "
-                  f"from '../data/logs' to '{logs_destination}' failed.")
-            
+            print(f"Could not move logs from '../data/logs' to '{logs_destination}'.")
+
     print('Model saved.\n')
+
+
 
 def predict_test_data(test_ds, model, args, early_stopping_callback, train_iter):
     """
@@ -899,7 +1112,7 @@ def predict_test_data(test_ds, model, args, early_stopping_callback, train_iter)
     cntr = 0
     test_iter = 0
     test_epoch = 0
-
+        
     # Determine the number of iterations to use for evaluating the model
     prediction_dataset_factor = 10
     if early_stopping_callback.stop_training:
@@ -968,6 +1181,12 @@ def predict_test_data(test_ds, model, args, early_stopping_callback, train_iter)
                 prediction_metrics["RF"].add_predictions(labels, model[2].predict_proba(statistics))
                 prediction_metrics["SVM"].add_predictions(labels, model[3].predict_proba(statistics))
                 prediction_metrics["kNN"].add_predictions(labels, model[4].predict_proba(statistics))
+            elif architecture == "FFNN":
+                prediction, labels = predict_torch(model, args, statistics, labels, feature_engineering=True)
+                prediction_metrics[architecture].add_predictions(labels, prediction)
+            elif architecture == "LSTM":
+                prediction, labels = predict_torch(model, args, statistics, labels, feature_engineering=False)
+                prediction_metrics[architecture].add_predictions(labels, prediction)
             else:
                 prediction = model.predict(statistics, batch_size=args.batch_size, verbose=1)
                 prediction_metrics[architecture].add_predictions(labels, prediction)
@@ -1054,13 +1273,25 @@ def main():
     architecture = args.architecture
     extend_model = args.extend_model
 
+    if architecture == "FFNN" or architecture == "LSTM":
+        backend = Backend.PYTORCH
+    elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
+        backend = Backend.SCIKIT
+    else:
+        backend = Backend.KERAS
+
     # Validate inputs
-    if len(os.path.splitext(args.model_name)) != 2 or os.path.splitext(args.model_name)[1] != '.h5':
-        print('ERROR: The model name must have the ".h5" extension!', file=sys.stderr)
+    if os.path.splitext(args.model_name)[1] not in ('.h5', '.pth'):
+        print('ERROR: The model must have extension ".h5" (for Keras) or ".pth" (for PyTorch).', file=sys.stderr)
+        sys.exit(1)
+    
+    if backend == Backend.PYTORCH and os.path.splitext(args.model_name)[1] != ".pth":
+        print("ERROR: PyTorch models must have .pth file extension.")
         sys.exit(1)
 
+
     if extend_model is not None:
-        if architecture not in ('FFNN', 'CNN', 'LSTM'):
+        if architecture not in ('CNN'):
             print('ERROR: Models with the architecture %s can not be extended!' % architecture,
                   file=sys.stderr)
             sys.exit(1)
@@ -1099,14 +1330,19 @@ def main():
     output_layer_size = max([config.CIPHER_TYPES.index(type) for type in cipher_types]) + 1
 
     # Create a model and allow for distributed training on multi-GPU machines
-    model, strategy = create_model_with_distribution_strategy(architecture, 
-                                                    extend_model, 
-                                                    output_layer_size=output_layer_size, 
-                                                    max_train_len=args.max_train_len)
+    model, strategy = create_model_with_distribution_strategy(
+    architecture, backend, extend_model, output_layer_size=output_layer_size, max_train_len=args.max_train_len)
+
     
-    early_stopping_callback, train_iter, training_stats = train_model(model, strategy, 
+    if backend == Backend.KERAS or backend == Backend.SCIKIT:
+        early_stopping_callback, train_iter, training_stats = train_model(model, strategy, 
                                                                       args, train_ds)
-    save_model(model, args)
+    elif backend == Backend.PYTORCH:
+        early_stopping_callback, train_iter, training_stats = train_torch(model, args, train_ds, config.FEATURE_ENGINEERING)
+    else:
+        raise ValueError(f"Unkown backend: {backend}")
+    
+    save_model(model, args, backend)
     prediction_stats = predict_test_data(test_ds, model, args, early_stopping_callback, train_iter)
     
     print(training_stats)

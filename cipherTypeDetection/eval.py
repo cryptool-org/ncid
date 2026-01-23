@@ -1,31 +1,32 @@
 import multiprocessing
 from pathlib import Path
 import argparse
-import random
 import sys
 import os
 import pickle
 import functools
-import numpy as np
+import time
 from datetime import datetime
+
+import torch
+import torch.nn.functional as F
 
 # This environ variable must be set before all tensorflow imports!
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 import tensorflow_datasets as tfds
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.metrics import SparseTopKCategoricalAccuracy
 sys.path.append("../")
-from util.utils import map_text_into_numberspace
-from util.utils import print_progress
+from util.utils import map_text_into_numberspace, print_progress
 import cipherTypeDetection.config as config
 from cipherTypeDetection.cipherStatisticsDataset import CipherStatisticsDataset, PlaintextPathsDatasetParameters, RotorCiphertextsDatasetParameters, calculate_statistics, pad_sequences
 from cipherTypeDetection.predictionPerformanceMetrics import PredictionPerformanceMetrics
 from cipherTypeDetection.rotorDifferentiationEnsemble import RotorDifferentiationEnsemble
 from cipherTypeDetection.ensembleModel import EnsembleModel
-from cipherTypeDetection.transformer import MultiHeadSelfAttention, TransformerBlock, TokenAndPositionEmbedding
+from cipherTypeDetection.models.modelFile import ModelFile
 from util.utils import get_model_input_length
 from cipherImplementations.cipher import OUTPUT_ALPHABET, UNKNOWN_SYMBOL_NUMBER
+from cipherTypeDetection.config import Backend
+from cipherTypeDetection.models.predictionHelper import predict_ffnn, predict_lstm, predict_cnn, predict_transformer
 tf.debugging.set_log_device_placement(enabled=False)
 # always flush after print as some architectures like RF need very long time before printing anything.
 print = functools.partial(print, flush=True)
@@ -36,8 +37,23 @@ for device in tf.config.list_physical_devices('GPU'):
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
+def evaluate_torch(model, inputs, labels, batch_size):
+    with torch.no_grad():
+        outputs = model.predict(inputs, batch_size)
+        y = torch.tensor(labels.numpy(), dtype=torch.long)
 
-def benchmark(args, model, architecture):
+        loss = F.cross_entropy(outputs, y)
+        top1 = torch.argmax(outputs, dim=1)
+        acc = (top1 == y).float().mean()
+
+        # Calc top-3
+        top3 = torch.topk(outputs, k=3, dim=1).indices
+        y_expanded = y.unsqueeze(1).expand_as(top3)
+        k3_acc = (top3 == y_expanded).any(dim=1).float().mean()
+
+        return loss.item(), acc.item(), k3_acc.item()
+
+def benchmark(args, model, architecture, backend):
     cipher_types = args.ciphers
     args.plaintext_folder = os.path.abspath(args.plaintext_folder)
     if args.dataset_size * args.dataset_workers > args.max_iter:
@@ -120,21 +136,26 @@ def benchmark(args, model, architecture):
     print("Datasets loaded.\n")
 
     print('Evaluating model...')
-    import time
+
     start_time = time.time()
     iteration = 0
     epoch = 0
     results = []
     prediction_metrics = PredictionPerformanceMetrics(model_name=architecture)
+
     while dataset.iteration < args.max_iter:
         batches = next(dataset)
         
         for index, batch in enumerate(batches):
             statistics, labels, ciphertexts = batch.items()
 
-            if architecture == "FFNN":
+            if architecture == "FFNN" and backend == Backend.KERAS:
                 results.append(model.evaluate(statistics, labels, batch_size=args.batch_size, verbose=1))
-            if architecture in ("CNN", "LSTM", "Transformer"):
+            elif architecture == "FFNN" and backend == Backend.PYTORCH:
+                results.append(evaluate_torch(model, statistics, labels, batch_size=args.batch_size))
+            elif architecture == "LSTM" and backend == Backend.PYTORCH:
+                results.append(evaluate_torch(model, ciphertexts, labels, batch_size=args.batch_size))
+            elif architecture in ("CNN", "Transformer"):
                 results.append(model.evaluate(ciphertexts, labels, batch_size=args.batch_size, verbose=1))
             elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
                 results.append(model.score(statistics, labels))
@@ -194,7 +215,7 @@ def evaluate(args, model, architecture):
         if iterations > args.max_iter:
             break
         path = os.path.join(args.data_folder, name)
-        if os.path.isfile(path):
+        if os.path.isfile(path) and path.endswith(".txt"):
             if iterations > args.max_iter:
                 break
             batch = []
@@ -302,8 +323,7 @@ def evaluate(args, model, architecture):
         avg_test_acc = avg_test_acc / len(results_list)
         print("\n\nAverage evaluation results from %d iterations: avg_test_acc=%f" % (iterations, avg_test_acc))
 
-
-def predict_single_line(args, model, architecture):
+def predict_single_line(args, model, architecture, backend):
     cipher_id_result = ''
     ciphertexts = []
     result = []
@@ -339,28 +359,17 @@ def predict_single_line(args, model, architecture):
             continue
         results = None
         if architecture == "FFNN":
-            result = model.predict(tf.convert_to_tensor([statistics]), args.batch_size, verbose=0)
-        elif architecture in ("CNN", "LSTM", "Transformer"):
-            input_length = get_model_input_length(model, architecture)
-            if len(ciphertext) < input_length:
-                ciphertext = pad_sequences([list(ciphertext)], maxlen=input_length)[0]
-            split_ciphertext = [ciphertext[input_length*j:input_length*(j+1)] for j in range(len(ciphertext) // input_length)]
-            results = []
-            if architecture in ("LSTM", "Transformer"):
-                for ct in split_ciphertext:
-                    results.append(model.predict(tf.convert_to_tensor([ct]), args.batch_size, verbose=0))
-            elif architecture == "CNN":
-                for ct in split_ciphertext:
-                    results.append(
-                        model.predict(tf.reshape(tf.convert_to_tensor([ct]), (1, input_length, 1)), args.batch_size, verbose=0))
-            result = results[0]
-            for res in results[1:]:
-                result = np.add(result, res)
-            result = np.divide(result, len(results))
+            result = predict_ffnn(model, [statistics], args.batch_size, backend)
+        elif architecture == "LSTM":
+            result = predict_lstm(model, ciphertext, args.batch_size, backend)
+        elif architecture == "CNN":
+            result = predict_cnn(model, ciphertext, args.batch_size)
+        elif architecture == "Transformer":
+            result = predict_transformer(model, ciphertext, args.batch_size)
         elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
             result = model.predict_proba(tf.convert_to_tensor([statistics]))
         elif architecture == "Ensemble":
-            result = model.predict(tf.convert_to_tensor([statistics]), [ciphertext], args.batch_size, verbose=0)
+            result = model.predict([statistics], [ciphertext], args.batch_size, verbose=0)
 
         if isinstance(result, list):
             result_list = list(result[0])
@@ -388,6 +397,9 @@ def predict_single_line(args, model, architecture):
     res_dict = {}
     if len(result) != 0:
         for j, val in enumerate(result[0]):
+            if j >= len(args.ciphers):
+                # Stop in cases where model is trained to predict more classes then are requested
+                break
             res_dict[args.ciphers[j]] = val * 100
     return res_dict
 
@@ -398,45 +410,63 @@ def load_model(architecture, args, model_path, cipher_types):
     architecture_list = args.architectures
     
     model = None
-
-    if architecture in ("FFNN", "CNN", "LSTM", "Transformer"):
-        if architecture == 'Transformer':
-            if not hasattr(config, "maxlen"):
-                raise ValueError("maxlen must be defined in the config when loading a Transformer model!")
-            model = tf.keras.models.load_model(args.model, custom_objects={
-                'TokenAndPositionEmbedding': TokenAndPositionEmbedding, 
-                'TransformerBlock': TransformerBlock})
-        else:
-            model = tf.keras.models.load_model(args.model)
-        if architecture in ("CNN", "LSTM", "Transformer"):
-            config.FEATURE_ENGINEERING = False
-            config.PAD_INPUT = True
-        else:
-            config.FEATURE_ENGINEERING = True
-            config.PAD_INPUT = False
-        optimizer = Adam(learning_rate=config.learning_rate, beta_1=config.beta_1, beta_2=config.beta_2, epsilon=config.epsilon,
-                         amsgrad=config.amsgrad)
-        model.compile(optimizer=optimizer, loss="sparse_categorical_crossentropy",
-                       metrics=["accuracy", SparseTopKCategoricalAccuracy(k=3, name="k3_accuracy")])
+    backend = None
+    if model_path.endswith(".pth"):
+        backend = Backend.PYTORCH
     elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
+        backend = Backend.SCIKIT
+    else:
+        backend = Backend.KERAS
+
+    is_feature_engineering_arch = architecture in ("FFNN", "DT", "NB", "RF", "ET", "SVM", "kNN")
+    is_feature_learning_arch = architecture in ("CNN", "LSTM", "Transformer")
+
+    if is_feature_engineering_arch:
+        model_file = ModelFile(model_path, architecture, backend=backend)
+        model = model_file.load_model()
         config.FEATURE_ENGINEERING = True
         config.PAD_INPUT = False
-        with open(model_path, "rb") as f:
-            model = pickle.load(f)
+    elif is_feature_learning_arch:
+        model_file = ModelFile(model_path, architecture, backend=backend)
+        model = model_file.load_model()
+        config.FEATURE_ENGINEERING = False
+        config.PAD_INPUT = True
     elif architecture == 'Ensemble':
         cipher_indices = []
         for cipher_type in cipher_types:
             cipher_indices.append(config.CIPHER_TYPES.index(cipher_type))
-        model = EnsembleModel(model_list, architecture_list, strategy, cipher_indices)
+        model_files = []
+        for i, model in enumerate(model_list):
+            arch = architecture_list[i]
+            if model.endswith(".pth"):
+                model_backend = Backend.PYTORCH
+            elif arch in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
+                model_backend = Backend.SCIKIT
+            else:
+                model_backend = Backend.KERAS
+            file = ModelFile(model, arch, model_backend)
+            model_files.append(file)
+        model = EnsembleModel(model_files, strategy, cipher_indices)
     else:
         raise ValueError("Unknown architecture: %s" % architecture)
     
-    rotor_only_model_path = args.rotor_only_model
-    with open(rotor_only_model_path, "rb") as f:
-        rotor_only_model = pickle.load(f)
+    # Check if there are rotor ciphers among those requested
+    has_rotor_ciphers = any(c in config.ROTOR_CIPHER_TYPES for c in cipher_types)
 
-    # Embed all models in RotorDifferentiationEnsemble to improve recognition of rotor ciphers
-    return RotorDifferentiationEnsemble(architecture, model, rotor_only_model)
+    # If there are rotor ciphers, also load the rotor_only model.
+    if has_rotor_ciphers:
+        rotor_only_model_path = args.rotor_only_model
+        if not os.path.exists(rotor_only_model_path):
+            raise FileNotFoundError(f"Rotor-only model is required but not found at {rotor_only_model_path}")
+        with open(rotor_only_model_path, "rb") as f:
+            rotor_only_model = pickle.load(f)
+        return RotorDifferentiationEnsemble(architecture, model, rotor_only_model), "Ensemble", Backend.KERAS
+
+    # If there are no rotor ciphers:
+    # - if it’s an ensemble, return the ensemble directly
+    # - otherwise return the normal model
+    return model, architecture, backend
+
 
 def expand_cipher_groups(cipher_types):
     """Turn cipher group identifiers (ACA, MTC3) into a list of their ciphers"""
@@ -573,8 +603,8 @@ def main():
     for arg in vars(args):
         print("{:23s}= {:s}".format(arg, str(getattr(args, arg))))
     m = os.path.splitext(args.model)
-    if len(os.path.splitext(args.model)) != 2 or os.path.splitext(args.model)[1] != '.h5':
-        print('ERROR: The model name must have the ".h5" extension!', file=sys.stderr)
+    if os.path.splitext(args.model)[1] not in ('.h5', '.pth'):
+        print('ERROR: The model must have extension ".h5" (for Keras) or ".pth" (for PyTorch FFNN).', file=sys.stderr)
         sys.exit(1)
 
     architecture = args.architecture
@@ -591,12 +621,15 @@ def main():
         for i in range(len(args.models)):
             model = args.models[i]
             arch = args.architectures[i]
-            if not os.path.exists(os.path.abspath(model)):
-                raise ValueError("Model in %s does not exist." % os.path.abspath(model))
+            abs_path = os.path.abspath(model)
+            if not os.path.exists(abs_path):
+                raise ValueError("Model in %s does not exist." % abs_path)
             if arch not in ('FFNN', 'CNN', 'LSTM', 'DT', 'NB', 'RF', 'ET', 'Transformer', 'SVM', 'kNN'):
                 raise ValueError("Unallowed architecture %s" % arch)
-            if arch in ('FFNN', 'CNN', 'LSTM', 'Transformer') and not os.path.abspath(model).endswith('.h5'):
-                raise ValueError("Model names of the types %s must have the .h5 extension." % ['FFNN', 'CNN', 'LSTM', 'Transformer'])
+            if arch in ('CNN', 'Transformer') and not abs_path.endswith('.h5'):
+                raise ValueError("Model names of the types %s must have the .h5 extension." % ['CNN', 'Transformer'])
+            if arch in ('FFNN', 'LSTM') and not (abs_path.endswith('.h5') or abs_path.endswith('.pth')):
+                raise ValueError("Model names of the types %s must have the .h5 or .pth extension." % ['FFNN', 'LSTM'])
     elif args.models is not None or args.architectures is not None:
         raise ValueError("It is only allowed to use the --models and --architectures with the Ensemble architecture.")
 
@@ -609,18 +642,15 @@ def main():
     #         model = load_model()
     # else:
     #     model = load_model()
-    model = load_model(architecture, args, model_path, cipher_types)
+    model, architecture, backend = load_model(architecture, args, model_path, cipher_types)
     print("Model Loaded.")
-
-    # Model is now always an ensemble
-    architecture = "Ensemble"
 
     # the program was started as in benchmark mode.
     if args.download_dataset is not None:
-        benchmark(args, model, architecture)
+        benchmark(args, model, architecture, backend)
     # the program was started in single_line mode.
     elif args.ciphertext is not None or args.file is not None:
-        predict_single_line(args, model, architecture)
+        predict_single_line(args, model, architecture, backend)
     # the program was started in prediction mode.
     else:
         evaluate(args, model, architecture)

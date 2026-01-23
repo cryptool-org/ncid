@@ -1,3 +1,5 @@
+from enum import Enum
+
 from cipherImplementations.cipher import INPUT_ALPHABET, UNKNOWN_SYMBOL, UNKNOWN_SYMBOL_NUMBER
 from cipherImplementations.simpleSubstitution import SimpleSubstitution
 from cipherImplementations.hill import Hill
@@ -192,3 +194,10 @@ maxlen = 1000
 # LearningRateSchedulers
 decay = 1e-8
 drop = 0.1
+
+class Backend(Enum):
+    """Differentiate between the Keras, PyTorch and scikit-learn backend for model training."""
+    KERAS = 0
+    PYTORCH = 1
+    SCIKIT = 2
+

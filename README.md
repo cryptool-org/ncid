@@ -10,6 +10,9 @@ While the project was focused on ACA ciphers at first, a later extension added t
 
 Users that are experienced in machine learning can use the tools provided in this project to train and evaluate ML models using the `train.py` and `eval.py` scripts. For further information see the following sections *Training* and *Evaluation*. 
 
+The initial models were trained using the *Keras* and *scikit-learn* libraries. In 2025 Stefano Sala converted the code for the FFNN and LSTM machine learning architectures from Keras to *PyTorch* as part of his [Bachelor thesis](https://www.cryptool.org/media/publications/theses/BA_Stefano-Sala.pdf). One of the goals of this conversion was a more flexible code architecture for the definition and training of the machine learning models. 
+With these changes, the FFNN and LSTM machine learning architectures can only be trained with PyTorch, whereas the evaluation still supports both types of model files.
+
 # License
 
 This software and the online version on https://www.cryptool.org/cto/ncid are licensed with the GPLv3 license. Private use of this software is allowed. Software using parts of the code from this repository must not be commercially used and also must be GPLv3 licensed.
@@ -53,7 +56,7 @@ python3 train.py --help
   ```
 
 - ```
-  python3 train.py --architecture=FFNN --dataset_workers=50 --train_dataset_size=64960 --batch_size=512 --max_iter=1000000000 --min_train_len=100 --max_train_len=100 --min_test_len=100 --max_test_len=100 --model_name=t30.h5 > weights/t30.txt 2> weights/err_t30.txt &
+  python3 train.py --architecture=FFNN --dataset_workers=50 --train_dataset_size=64960 --batch_size=512 --max_iter=1000000000 --min_train_len=100 --max_train_len=100 --min_test_len=100 --max_test_len=100 --model_name=t30.pth > weights/t30.txt 2> weights/err_t30.txt &
   ```
 
 
@@ -252,10 +255,14 @@ were the argument 'FFNN' can be replaced by the actual architecture to train. At
 
 [Histocrypt 2021: A Massive Machine-Learning Approach For Classical Cipher Type Detection Using Feature Engineering](https://doi.org/10.3384/ecp183)
 
-AusDM 2021: Detection of Classical Cipher Types with Feature-Learning  Approaches
+AusDM 2021: Detection of Classical Cipher Types with Feature-Learning Approaches:
 
 - [Proceedings](https://link.springer.com/book/10.1007/978-981-16-8531-6)
 - [Pre-Print](https://www.cryptool.org/download/ncid/Detect-Classical-Cipher-Types-with-Feature-Learning_AusDM2021_PrePrint.pdf)
+
+PyTorch conversion of FFNN and LSTM machine learning architectures:
+
+[Application of AI for ciphertext identification](https://www.cryptool.org/media/publications/theses/BA_Stefano-Sala.pdf)
 
 ## BibTeX Citation
 

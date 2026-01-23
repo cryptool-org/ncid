@@ -1,10 +1,9 @@
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from cipherImplementations.cipher import OUTPUT_ALPHABET
+from torch.nn import Module
 import cipherTypeDetection.config as config
 from cipherTypeDetection.featureCalculations import calculate_rotor_statistics
-from util.utils import get_model_input_length
+from cipherTypeDetection.config import Backend
+from cipherTypeDetection.models.predictionHelper import predict_ffnn, predict_lstm, predict_cnn, predict_transformer
 
 class RotorDifferentiationEnsemble:
     """
@@ -37,6 +36,11 @@ class RotorDifferentiationEnsemble:
         """
         self._general_architecture = general_model_architecture
         self._general_model = general_model
+        self._general_model_backend = (
+            Backend.PYTORCH 
+            if isinstance(self._general_model, Module) 
+            else Backend.KERAS
+        )
         self._rotor_only_model = rotor_only_model
 
     def predict(self, statistics, ciphertexts, batch_size, verbose=0):
@@ -69,38 +73,22 @@ class RotorDifferentiationEnsemble:
         
         # Perform full prediction for all ciphers
         architecture = self._general_architecture
-        if architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
+        backend = self._general_model_backend
+        if architecture == "FFNN":
+            predictions = predict_ffnn(self._general_model, statistics, batch_size, backend)
+        elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
             predictions = self._general_model.predict_proba(statistics)
         elif architecture == "Ensemble":
             predictions = self._general_model.predict(statistics, 
                                                       ciphertexts, 
                                                       batch_size=batch_size, 
                                                       verbose=verbose)
-        elif architecture in ("LSTM", "Transformer"):
-            input_length = get_model_input_length(self._general_model, architecture)
-            if isinstance(ciphertexts, list):
-                split_ciphertexts = []
-                for ciphertext in ciphertexts:
-                    if len(ciphertext) < input_length:
-                        ciphertext = pad_sequences([ciphertext], maxlen=input_length, 
-                                                    padding='post', 
-                                                    value=len(OUTPUT_ALPHABET))[0]
-                    split_ciphertexts.append([ciphertext[input_length*j:input_length*(j+1)] for j in range(
-                        len(ciphertext) // input_length)])
-                split_predictions = []
-                for split_ciphertext in split_ciphertexts:
-                    for ct in split_ciphertext:
-                        split_predictions.append(self._general_model.predict(tf.convert_to_tensor([ct]), batch_size=batch_size, verbose=verbose))
-                combined_prediction = split_predictions[0]
-                for split_prediction in split_predictions[1:]:
-                    combined_prediction = np.add(combined_prediction, split_prediction)
-                for j in range(len(combined_prediction)):
-                    combined_prediction[j] /= len(split_predictions)
-                predictions = combined_prediction
-            else:
-                prediction = self._general_model.predict(ciphertexts, batch_size=batch_size, 
-                                            verbose=verbose)
-                predictions = prediction
+        elif architecture == "LSTM":
+            predictions = predict_lstm(self._general_model, ciphertexts, batch_size, backend)
+        elif architecture == "Transformer":
+            predictions = predict_transformer(self._general_model, ciphertexts, batch_size)
+        elif architecture == "CNN":
+            predictions = predict_cnn(self._general_model, ciphertexts, batch_size)
         else:
             predictions = self._general_model.predict(statistics, 
                                                       batch_size=batch_size, 

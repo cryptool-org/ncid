@@ -18,6 +18,7 @@ import cipherTypeDetection.config as config
 from cipherTypeDetection.rotorDifferentiationEnsemble import RotorDifferentiationEnsemble
 from cipherTypeDetection.transformer import MultiHeadSelfAttention, TransformerBlock, TokenAndPositionEmbedding
 from cipherTypeDetection.ensembleModel import EnsembleModel
+from cipherTypeDetection.models.modelFile import ModelFile
 
 import pandas as pd
 
@@ -166,15 +167,17 @@ async def evaluate_single_line_ciphertext(ciphertext: str, architecture: List[st
             config.FEATURE_ENGINEERING = feature_engineering
             config.PAD_INPUT = pad_input
         else:
-            model_list = []
-            architecture_list = []
+            model_files = []
             for architecture in architectures:
-                model_list.append(models[architecture][0])
-                architecture_list.append(architecture)
+                # Still use KERAS backend for DL models for now. Has to be changed in conjunction with the model loading code!
+                backend = config.Backend.KERAS
+                if architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
+                    backend = config.Backend.SCIKIT
+                file = ModelFile(models[architecture][0], architecture, backend)
+                model_files.append(file)
             architecture = "Ensemble"
             model = EnsembleModel(
-                model_list,
-                architecture_list,
+                model_files,
                 "weighted",
                 aca_cipher_types + rotor_cipher_types)
         
@@ -193,7 +196,11 @@ async def evaluate_single_line_ciphertext(ciphertext: str, architecture: List[st
             batch_size=128,
             verbose=False
         )
-        prediction = cipherEval.predict_single_line(eval_args, model, architecture)
+
+        # Still use KERAS backend for now
+        backend = config.Backend.KERAS
+
+        prediction = cipherEval.predict_single_line(eval_args, model, architecture, backend)
     
         return {"success": True, "payload": prediction}
     except BaseException as e:

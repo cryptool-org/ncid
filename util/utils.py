@@ -1,5 +1,7 @@
 import numpy as np
 import os
+import torch
+from cipherTypeDetection.models.lstm import LSTM
 
 
 def map_text_into_numberspace(text, alphabet, unknown_symbol_number):
@@ -56,9 +58,12 @@ def decrypt_morse(ciphertext, key_morse, key):
     return morse_code
 
 
-def get_model_input_length(model_, arch):
+def get_model_input_length(model_, arch) -> int:
+    is_pytorch_model = isinstance(model_, LSTM)
     input_length = None
-    if arch == "LSTM":
+    if arch == "LSTM" and is_pytorch_model:
+        input_length = model_.lstm.input_size
+    elif arch == "LSTM" and not is_pytorch_model:
         input_length = model_.layers[0].input_length
     elif arch == "CNN":
         input_length = model_.layers[0].input_shape[1]
@@ -145,3 +150,15 @@ def print_progress(output_str, file_counter, total_file_count, factor=100):
             output += '.'
         output = output + '] ' + str(file_counter) + '/' + str(total_file_count) + ' (' + str(percentage) + "%)"
         print(output)
+
+def get_pytorch_device():
+    # Will only load the model onto a single CPU / GPU. Using PyTorch DDP
+    # is quite involved and would require a reorganization of the codebase.
+    if torch.cuda.is_available():
+        device = torch.device("cuda:0")
+    elif torch.mps.is_available() and torch.backends.mps.is_built():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
+    return device

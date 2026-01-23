@@ -6,3 +6,5 @@ tensorflow_datasets==4.9.4
 scikit_learn==1.4.0 # do not change this to be able to load old models!
 h5py==3.10.0
 pandas==2.2.0
+torch==2.7.0
+torchinfo==0.1.0

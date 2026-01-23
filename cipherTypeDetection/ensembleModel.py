@@ -1,14 +1,5 @@
-import tensorflow as tf
-import pickle
 import numpy as np
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.metrics import SparseTopKCategoricalAccuracy
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-import cipherTypeDetection.config as config
-from cipherTypeDetection.transformer import MultiHeadSelfAttention, TransformerBlock, TokenAndPositionEmbedding
-from cipherImplementations.cipher import OUTPUT_ALPHABET
-from util.utils import get_model_input_length
-
+from cipherTypeDetection.models.predictionHelper import predict_ffnn, predict_lstm, predict_cnn, predict_transformer
 
 f1_ffnn = [0.85802469, 0.71601017, 1., 0.99176076, 0.2358263, 0.77622378, 0.70844478, 0.96519285, 0.94650687, 0.85040917, 0.70607827, 0.78005115, 0.84944426, 0.99756839, 0.97485951, 0.95828066, 0.94724363, 0.9211165, 0.99908898, 0.95622688, 0.99787557, 0.74629137, 0.93963723, 0.50773994, 0.95047098, 0.99098016, 0.81281534, 1., 0.99939357, 0.94468614, 0.74026438, 0.80489161, 0.99756691, 0.98346859, 0.96463596, 0.54026417, 0.98918919, 0.2, 0.11942675, 0.14091471, 0.14470678, 0.12706072, 0.99969651, 0.55685131, 0.0059312, 0.99969669, 0.68258591, 0.79946255, 0.49982462, 0.94923858, 0.78894205, 0.8, 0.95987842, 0.87563309, 0.20748299, 0.11743451, 0.04731679, 0.41069723, 0.32477514, 0.11273486, 0.16886064]
 f1_transformer = [0.03043478, 0.69008264, 1., 0.99455206, 0.58704225, 0.73749569, 0.73001076, 0.95184968, 0.57126168, 0.3715415, 0.7044335, 0.86148552, 0.9545597, 0.99301973, 0.98642534, 0.92614159, 0.99266952, 0.91793838, 0.99908898, 0.91535492, 0.98880484, 0.9969697, 0.98505642, 0.11973019, 0.3258499, 0.99817961, 0.82288401, 1., 0.99969651, 0.99516616, 0.77780972, 0.7008872, 0.49159664, 0.60615959, 0.91304348, 0.79020173, 0.97655768, 0.2, 0.1637931, 0.22581529, 0.18894137, 0.09254089, 1., 0.15538462, 0.27428112, 0.96774194, 0.6044648, 0.48468399, 0.68386023, 0.52110977, 0.99574985, 0.84159378, 0.95633188, 0.87079446, 0.29268293, 0.33854521, 0.04137931, 0.38119935, 0.24557878, 0.06648794, 0.15943396]
@@ -37,9 +28,8 @@ mcc_rf = 0.7375076780194245
 mcc_nb = 0.5294535259111087
 # Cohen's Kappa is not used as these values are almost the same like MCC.
 
-
 class EnsembleModel:
-    def __init__(self, models, architectures, strategy, cipher_indices):
+    def __init__(self, model_files, strategy, cipher_indices):
         self.statistics_dict = {
             "FFNN": [f1_ffnn, accuracy_ffnn, recall_ffnn, precision_ffnn, mcc_ffnn],
             "Transformer": [f1_transformer, accuracy_transformer, recall_transformer, precision_transformer, mcc_transformer],
@@ -47,11 +37,13 @@ class EnsembleModel:
             "RF": [f1_rf, accuracy_rf, recall_rf, precision_rf, mcc_rf],
             "NB": [f1_nb, accuracy_nb, recall_nb, precision_nb, mcc_nb]
         }
-        self.models = models
-        self.architectures = architectures
+        self.model_files = model_files
+        self.models = [None] * len(self.model_files)
         self.strategy = strategy
-        if isinstance(models[0], str):
-            self.load_model()
+
+        for i, file in enumerate(model_files):
+            self.models[i] = file.load_model()
+
         for key in self.statistics_dict:
             statistics = self.statistics_dict[key]
             for i in range(4):
@@ -70,24 +62,6 @@ class EnsembleModel:
             statistics.append(network_total_votes)
             for i in range(len(network_total_votes)):
                 self.total_votes[i] += network_total_votes[i]
-
-    def load_model(self):
-        for j in range(len(self.models)):
-            if self.architectures[j] in ("FFNN", "CNN", "LSTM", "Transformer"):
-                if self.architectures[j] == 'Transformer':
-                    model_ = tf.keras.models.load_model(self.models[j], custom_objects={
-                        'TokenAndPositionEmbedding': TokenAndPositionEmbedding, 'MultiHeadSelfAttention': MultiHeadSelfAttention,
-                        'TransformerBlock': TransformerBlock})
-                else:
-                    model_ = tf.keras.models.load_model(self.models[j])
-                optimizer = Adam(learning_rate=config.learning_rate, beta_1=config.beta_1, beta_2=config.beta_2, epsilon=config.epsilon,
-                                 amsgrad=config.amsgrad)
-                model_.compile(optimizer=optimizer, loss="sparse_categorical_crossentropy",
-                               metrics=["accuracy", SparseTopKCategoricalAccuracy(k=3, name="k3_accuracy")])
-                self.models[j] = model_
-            else:
-                with open(self.models[j], "rb") as f:
-                    self.models[j] = pickle.load(f)
 
     def evaluate(self, batch, batch_ciphertexts, labels, batch_size, metrics, verbose=0):
         correct_all = 0
@@ -111,52 +85,36 @@ class EnsembleModel:
 
     def predict(self, statistics, ciphertexts, batch_size, verbose=0):
         predictions = []
-        for index, model in enumerate(self.models):
-            architecture = self.architectures[index]
+        for index, model_file in enumerate(self.model_files):
+            model = self.models[index]
+            architecture = model_file.architecture
             if architecture == "FFNN":
-                predictions.append(model.predict(statistics, batch_size=batch_size, verbose=verbose))
-            elif architecture in ("CNN", "LSTM", "Transformer"):
-                input_length = get_model_input_length(model, architecture)
-                if isinstance(ciphertexts, list):
-                    split_ciphertexts = []
-                    for ciphertext in ciphertexts:
-                        if len(ciphertext) < input_length:
-                            ciphertext = pad_sequences([ciphertext], maxlen=input_length, 
-                                                       padding='post', 
-                                                       value=len(OUTPUT_ALPHABET))[0]
-                        split_ciphertexts.append([ciphertext[input_length*j:input_length*(j+1)] for j in range(
-                            len(ciphertext) // input_length)])
-                    split_predictions = []
-                    if architecture in ("LSTM", "Transformer"):
-                        for split_ciphertext in split_ciphertexts:
-                            for ct in split_ciphertext:
-                                split_predictions.append(model.predict(tf.convert_to_tensor([ct]), batch_size=batch_size, verbose=verbose))
-                    elif architecture == "CNN":
-                        for split_ciphertext in split_ciphertexts:
-                            for ct in split_ciphertext:
-                                reshaped_ciphertext = tf.reshape(tf.convert_to_tensor([ct]), 
-                                                                 (1, input_length, 1))
-                                split_predictions.append(model.predict(reshaped_ciphertext,
-                                                     batch_size=batch_size, verbose=0))
-                    combined_prediction = split_predictions[0]
-                    for split_prediction in split_predictions[1:]:
-                        combined_prediction = np.add(combined_prediction, split_prediction)
-                    for j in range(len(combined_prediction)):
-                        combined_prediction[j] /= len(split_predictions)
-                    predictions.append(combined_prediction)
-                else:
-                    if architecture in ("LSTM", "Transformer"):
-                        prediction = model.predict(ciphertexts, batch_size=batch_size, 
-                                                   verbose=verbose)
-                    elif architecture == "CNN":
-                        reshaped_ciphertexts = tf.reshape(ciphertexts, 
-                                                          (len(ciphertexts), input_length, 1))
-                        prediction = model.predict(reshaped_ciphertexts, batch_size=batch_size, 
-                                                   verbose=verbose)
-                    predictions.append(prediction)
+                prediction = predict_ffnn(model, statistics, batch_size, model_file.backend)
+                predictions.append(prediction)
+            elif architecture == "LSTM":
+                prediction = predict_lstm(model, ciphertexts, batch_size, model_file.backend)
+                predictions.append(prediction)
+            elif architecture == "CNN":
+                prediction = predict_cnn(model, ciphertexts, batch_size)
+                predictions.append(prediction)
+            elif architecture == "Transformer":
+                prediction = predict_transformer(model, ciphertexts, batch_size)
+                predictions.append(prediction)
             elif architecture in ("DT", "NB", "RF", "ET"):
                 predictions.append(model.predict_proba(statistics))
 
+        return self._scale_predictions(predictions)
+
+    def _scale_predictions(self, predictions):
+        """Scale model predictions using different strategies and statistics.
+        
+        With strategy 'mean' the predictions of all models are weighted equally and
+        the mean of the predictions for each class is returned.
+
+        When 'weighted' strategy is specified the performance of the models is taken
+        into consideration when scaling it's predictions for each class. The predictions
+        of better performing models have a bigger influence on the overall predictions.
+        """
         scaled = [[0.] * len(predictions[0][0]) for _ in range(len(predictions[0]))]
         if self.strategy == 'mean':
             for prediction in predictions:
@@ -168,7 +126,7 @@ class EnsembleModel:
                     scaled[i][j] = scaled[i][j] / len(predictions)
         elif self.strategy == 'weighted':
             for i in range(len(predictions)):
-                statistics = self.statistics_dict[self.architectures[i]]
+                statistics = self.statistics_dict[self.model_files[i].architecture]
                 for j in range(len(predictions[i])):
                     for k in range(len(predictions[i][j])):
                         scaled[j][k] += predictions[i][j][k] * statistics[-1][k] / self.total_votes[k]

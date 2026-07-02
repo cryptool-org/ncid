@@ -4,13 +4,14 @@ FROM dhi.io/python:3.11-debian13-dev AS build-image
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PIP_ROOT_USER_ACTION=ignore
 
 COPY requirements.txt /opt/requirements.txt
 RUN sed -i -re 's/^tensorflow\b/tensorflow-cpu/g' /opt/requirements.txt
 RUN set -ex \
     && python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir --target /opt/python -r /opt/requirements.txt \
-    && python -m pip install --no-cache-dir --target /opt/python "fastapi" "uvicorn[standard]"
+    && python -m pip install --no-cache-dir --upgrade --target /opt/python -r /opt/requirements.txt \
+    && python -m pip install --no-cache-dir --upgrade --target /opt/python "fastapi" "uvicorn[standard]"
 
 
 # hardened runtime image (DHI, Python 3.11, Debian 13/Trixie)

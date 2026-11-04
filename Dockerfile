@@ -13,7 +13,7 @@ COPY requirements.txt /opt/requirements.txt
 RUN sed -i -re 's/^tensorflow=/tensorflow-cpu=/g' /opt/requirements.txt
 
 RUN set -ex \
-    && python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir --upgrade pip setuptools \
     && python -m pip install --no-cache-dir -r /opt/requirements.txt \
     && python -m pip install --no-cache-dir "fastapi" "uvicorn[standard]"
 

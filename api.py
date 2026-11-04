@@ -166,6 +166,13 @@ async def evaluate_single_line_ciphertext(ciphertext: str, architecture: List[st
             model, feature_engineering, pad_input = models[architecture]
             config.FEATURE_ENGINEERING = feature_engineering
             config.PAD_INPUT = pad_input
+            # Wrap the model in the framework-independent model adapter
+            # expected by the RotorDifferentiationEnsemble.
+            if architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
+                backend = config.Backend.SCIKIT
+            else:
+                backend = config.Backend.KERAS
+            model = ModelFile(model, architecture, backend)
         else:
             model_files = []
             for architecture in architectures:

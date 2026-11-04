@@ -14,19 +14,18 @@ import torch.nn.functional as F
 # This environ variable must be set before all tensorflow imports!
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
-import tensorflow_datasets as tfds
 sys.path.append("../")
-from util.utils import map_text_into_numberspace, print_progress
+from util.utils import print_progress
 import cipherTypeDetection.config as config
-from cipherTypeDetection.cipherStatisticsDataset import CipherStatisticsDataset, PlaintextPathsDatasetParameters, RotorCiphertextsDatasetParameters, calculate_statistics, pad_sequences
+from cipherTypeDetection.cipherStatisticsDataset import CipherStatisticsDataset, PlaintextPathsDatasetParameters, RotorCiphertextsDatasetParameters, pad_sequences
 from cipherTypeDetection.predictionPerformanceMetrics import PredictionPerformanceMetrics
 from cipherTypeDetection.rotorDifferentiationEnsemble import RotorDifferentiationEnsemble
 from cipherTypeDetection.ensembleModel import EnsembleModel
 from cipherTypeDetection.models.modelFile import ModelFile
+from cipherTypeDetection.preprocessing import pad_line
+from cipherTypeDetection.predict import predict_ciphertext_line
 from util.utils import get_model_input_length
-from cipherImplementations.cipher import OUTPUT_ALPHABET, UNKNOWN_SYMBOL_NUMBER
 from cipherTypeDetection.config import Backend
-from cipherTypeDetection.models.predictionHelper import predict_ffnn, predict_lstm, predict_cnn, predict_transformer
 tf.debugging.set_log_device_placement(enabled=False)
 # always flush after print as some architectures like RF need very long time before printing anything.
 print = functools.partial(print, flush=True)
@@ -62,6 +61,7 @@ def benchmark(args, model, architecture, backend):
         sys.exit(1)
     if args.download_dataset and not os.path.exists(args.plaintext_folder) and args.plaintext_folder == os.path.abspath(
             '../data/gutenberg_en'):
+        import tensorflow_datasets as tfds
         print("Downloading Datsets...")
         tfds.download.add_checksums_dir('../data/checksums/')
         download_manager = tfds.download.download_manager.DownloadManager(download_dir='../data/', extract_dir=args.plaintext_folder)
@@ -324,11 +324,16 @@ def evaluate(args, model, architecture):
         print("\n\nAverage evaluation results from %d iterations: avg_test_acc=%f" % (iterations, avg_test_acc))
 
 def predict_single_line(args, model, architecture, backend):
-    cipher_id_result = ''
-    ciphertexts = []
-    result = []
+    # Wrap a raw model (e.g. a Keras or a scikit-learn model) so that it
+    # speaks the framework-independent prediction protocol. Ensembles are
+    # already adapters.
+    if not isinstance(model, (ModelFile, EnsembleModel, RotorDifferentiationEnsemble)):
+        model = ModelFile(model, architecture, backend)
+
+    all_cipher_names = list(config.CIPHER_TYPES)
+    result = {}
     if args.ciphertext is not None:
-        ciphertexts.append(args.ciphertext.encode())
+        ciphertexts = [args.ciphertext.encode()]
     else:
         ciphertexts = open(args.file, 'rb')
 
@@ -345,50 +350,26 @@ def predict_single_line(args, model, architecture, backend):
         # print(config.CIPHER_TYPES[int(label.decode())], "length: %d" % len(ciphertext))
 
         # Append ciphertext to itself. This improves the reliablity of the results.
-        while len(line) < 1000:
-            line = line + line
         # Limit line to at most 1000 characters to limit the execution time
-        line = line[:1000]
+        padded_line = pad_line(line)
 
-        print(line)
-        ciphertext = map_text_into_numberspace(line, OUTPUT_ALPHABET, UNKNOWN_SYMBOL_NUMBER)
-        try:
-            statistics = calculate_statistics(ciphertext)
-        except ZeroDivisionError:
+        print(padded_line)
+        res_dict = predict_ciphertext_line(padded_line, model, all_cipher_names, args.batch_size)
+        if not res_dict:
             print("\n")
             continue
-        results = None
-        if architecture == "FFNN":
-            result = predict_ffnn(model, [statistics], args.batch_size, backend)
-        elif architecture == "LSTM":
-            result = predict_lstm(model, ciphertext, args.batch_size, backend)
-        elif architecture == "CNN":
-            result = predict_cnn(model, ciphertext, args.batch_size)
-        elif architecture == "Transformer":
-            result = predict_transformer(model, ciphertext, args.batch_size)
-        elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
-            result = model.predict_proba(tf.convert_to_tensor([statistics]))
-        elif architecture == "Ensemble":
-            result = model.predict([statistics], [ciphertext], args.batch_size, verbose=0)
+        result = res_dict
 
-        if isinstance(result, list):
-            result_list = list(result[0])
-        else:
-            result_list = result[0].tolist()
-        if results is not None and architecture not in ('Ensemble', 'LSTM', 'Transformer', 'CNN'):
-            for j in range(len(result_list)):
-                result_list[j] /= len(results)
         if args.verbose:
             for cipher in args.ciphers:
-                print("{:23s} {:f}%".format(cipher, result_list[config.CIPHER_TYPES.index(cipher)]*100))
-            max_val = max(result_list)
-            cipher = config.CIPHER_TYPES[result_list.index(max_val)]
+                print("{:23s} {:f}%".format(cipher, res_dict[cipher]))
+            max_val = max(res_dict.values())
+            cipher = next(name for name, value in res_dict.items() if value == max_val)
         else:
-            max_val = max(result_list)
-            cipher = config.CIPHER_TYPES[result_list.index(max_val)]
-            print("{:s} {:f}%".format(cipher, max_val * 100))
+            max_val = max(res_dict.values())
+            cipher = next(name for name, value in res_dict.items() if value == max_val)
+            print("{:s} {:f}%".format(cipher, max_val))
         print()
-        cipher_id_result += cipher[0].upper()
 
     if args.file is not None:
         ciphertexts.close()
@@ -396,11 +377,11 @@ def predict_single_line(args, model, architecture, backend):
     # return a list of probabilities (does only return the last one in case a file is used)
     res_dict = {}
     if len(result) != 0:
-        for j, val in enumerate(result[0]):
-            if j >= len(args.ciphers):
+        for j, cipher in enumerate(args.ciphers):
+            if j >= len(all_cipher_names):
                 # Stop in cases where model is trained to predict more classes then are requested
                 break
-            res_dict[args.ciphers[j]] = val * 100
+            res_dict[cipher] = result[all_cipher_names[j]]
     return res_dict
 
 
@@ -460,6 +441,10 @@ def load_model(architecture, args, model_path, cipher_types):
             raise FileNotFoundError(f"Rotor-only model is required but not found at {rotor_only_model_path}")
         with open(rotor_only_model_path, "rb") as f:
             rotor_only_model = pickle.load(f)
+        # The rotor differentiation ensemble expects the general model to speak
+        # the framework-independent prediction protocol. Wrap a raw model.
+        if not isinstance(model, (ModelFile, EnsembleModel)):
+            model = ModelFile(model, architecture, backend)
         return RotorDifferentiationEnsemble(architecture, model, rotor_only_model), "Ensemble", Backend.KERAS
 
     # If there are no rotor ciphers:

@@ -1,5 +1,4 @@
-from cipherImplementations.cipher import OUTPUT_ALPHABET
-import cipherTypeDetection.config as config
+from cipherImplementations.cipher import OUTPUT_ALPHABET, UNKNOWN_SYMBOL_NUMBER
 import math
 from collections import Counter
 from py_mini_racer import py_mini_racer
@@ -8,7 +7,7 @@ import time
 
 from itertools import chain
 
-from util.utils import map_text_into_numberspace
+from util.textutils import map_text_into_numberspace
 
 js_functions = """var max_period = 15;
 
@@ -1274,7 +1273,7 @@ def calculate_cipher_sequence(line):
     """Returns characters of the input line (truncated to max 100 chars) in the order they
     appear in `line`. Each character is scaled by dividing by the largest possible value.
     Line is expected to be a list of numbers (mapping to the defined alphabet).
-    Unknown mappings are converted to `config.UNKNOWN_SYMBOL_NUMBER`."""
+    Unknown mappings are converted to `UNKNOWN_SYMBOL_NUMBER`."""
     feature_length = 500
     result = []
 
@@ -1287,14 +1286,14 @@ def calculate_cipher_sequence(line):
         if 0 <= char < 26:
             result.append(char)
         else:
-            result.append(config.UNKNOWN_SYMBOL_NUMBER)
+            result.append(UNKNOWN_SYMBOL_NUMBER)
 
     missing = feature_length - len(result)
     for i in range(missing):
-        result.append(config.UNKNOWN_SYMBOL_NUMBER)
+        result.append(UNKNOWN_SYMBOL_NUMBER)
 
-    # Divide by `config.UNKNOWN_SYMBOL_NUMBER` which is the max character mapping
-    return [character / config.UNKNOWN_SYMBOL_NUMBER for character in result]
+    # Divide by `UNKNOWN_SYMBOL_NUMBER` which is the max character mapping
+    return [character / UNKNOWN_SYMBOL_NUMBER for character in result]
 
 def calculate_average_distance(line):
     """Calculates the average distances between the occurances of the same letter. Divides the result by the line length. Returns an array of 26 entries."""

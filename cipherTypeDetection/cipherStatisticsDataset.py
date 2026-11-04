@@ -5,7 +5,8 @@ import cipherTypeDetection.config as config
 from cipherImplementations.simpleSubstitution import SimpleSubstitution
 import sys
 from cipherTypeDetection.trainingBatch import EvaluationBatch, TrainingBatch
-from util.utils import map_text_into_numberspace
+from cipherTypeDetection.preprocessing import pad_sequences
+from util.textutils import map_text_into_numberspace
 import copy
 import random
 import multiprocessing
@@ -67,16 +68,6 @@ def normalize_text(text, pos):
         if 26 >= text[i] >= pos:
             text[i] += 1
     return text
-
-def pad_sequences(sequences, maxlen):
-    """Pad sequences with data from itself."""
-    ret_sequences = []
-    for sequence in sequences:
-        length = len(sequence)
-        sequence = sequence * (maxlen // length) + sequence[:maxlen % length]
-        ret_sequences.append(sequence)
-    return np.array(ret_sequences)
-
 
 multiprocessing_logger = multiprocessing.log_to_stderr(logging.INFO)
 

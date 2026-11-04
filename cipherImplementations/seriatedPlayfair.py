@@ -1,7 +1,7 @@
 import numpy as np
 from cipherImplementations.playfair import Playfair
 from cipherImplementations.cipher import generate_random_keyword, generate_keyword_alphabet
-from util.utils import remove_unknown_symbols
+from util.textutils import remove_unknown_symbols
 
 
 class SeriatedPlayfair(Playfair):

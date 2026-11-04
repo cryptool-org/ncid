@@ -14,7 +14,7 @@ The checker needs the original frameworks (TensorFlow, scikit-learn) and the
 original model files, so run it in the training environment:
 
     python3 util/verify_onnx_parity.py
-    python3 util/verify_onnx_parity.py --model-dir data/models --tolerance 1e-3
+    python3 util/verify_onnx_parity.py --model-dir data/models --originals-dir /srv/ncid/models --tolerance 1e-3
     python3 util/verify_onnx_parity.py --only FFNN NB --ciphertext "abc..."
 
 The exit code is 0 if every model is within the tolerance, 1 otherwise.
@@ -68,7 +68,7 @@ def build_model_inputs(ciphertext):
     return numberspace, statistics, rotor_statistics
 
 
-def load_original(name, model_dir):
+def load_original(name, model_dir, originals_dir):
     """Load the original (non-ONNX) model of `name`.
 
     Returns
@@ -77,7 +77,7 @@ def load_original(name, model_dir):
         The loaded model and `None`, or `None` and an error message if the
         model file does not exist.
     """
-    path = os.path.join(model_dir, SOURCE_FILES[name])
+    path = os.path.join(originals_dir, SOURCE_FILES[name])
     if not os.path.exists(path):
         return None, f"original model not found: {path}"
 
@@ -134,7 +134,10 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Verify that the ONNX models match the original models.")
     parser.add_argument("--model-dir", default="data/models",
-                        help="Directory with the ONNX and the original model files.")
+                        help="Directory with the ONNX model files.")
+    parser.add_argument("--originals-dir", default=None,
+                        help="Directory with the original (non-ONNX) model "
+                             "files. Defaults to --model-dir.")
     parser.add_argument("--ciphertext", default=DEFAULT_CIPHERTEXT,
                         help="The line of ciphertext to compare on.")
     parser.add_argument("--tolerance", type=float, default=1e-3,
@@ -155,6 +158,7 @@ def main():
             sys.exit(2)
 
     numberspace, statistics, rotor_statistics = build_model_inputs(args.ciphertext)
+    originals_dir = args.originals_dir if args.originals_dir else args.model_dir
 
     print(f"ONNX parity check (tolerance={args.tolerance:g}, "
           f"model_dir={args.model_dir})")
@@ -164,7 +168,7 @@ def main():
         detail = None
         max_abs_diff = None
         try:
-            original, error = load_original(name, args.model_dir)
+            original, error = load_original(name, args.model_dir, originals_dir)
             if error:
                 status, detail = "SKIP", error
             else:

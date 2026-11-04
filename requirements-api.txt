@@ -1,0 +1,9 @@
+# Framework-free serving dependencies of the NCID API (api.py + inference package).
+# The API serves ONNX models via ONNX Runtime; no training framework
+# (TensorFlow, PyTorch, scikit-learn) is required.
+fastapi
+uvicorn[standard]
+onnxruntime
+# shared pins (must match requirements.txt)
+numpy==1.26.4
+py_mini_racer==0.6.0

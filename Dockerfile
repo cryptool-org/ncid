@@ -11,9 +11,14 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt /opt/requirements.txt
 RUN sed -i -re 's/^tensorflow=/tensorflow-cpu=/g' /opt/requirements.txt
+# torch has no separate CPU package on PyPI; the CPU build is distributed under
+# the same name from the PyTorch index and is installed in its own step below
+RUN sed -i -re 's/^torch=/#torch=/g' /opt/requirements.txt
 
 RUN set -ex \
     && python -m pip install --no-cache-dir --upgrade pip setuptools \
+    && python -m pip install --no-cache-dir torch==2.8.0 \
+        --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install --no-cache-dir -r /opt/requirements.txt \
     && python -m pip install --no-cache-dir "fastapi" "uvicorn[standard]"
 

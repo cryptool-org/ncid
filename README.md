@@ -128,7 +128,7 @@ python3 eval.py --help
 
 The HTTP API is implemented in `api.py` and is served with `uvicorn` (see [CrypTool-Online NCID](https://www.cryptool.org/cto/ncid)). Since the models are served as ONNX graphs via [ONNX Runtime](https://onnxruntime.ai/), the API runtime does **not** need any training framework (TensorFlow, PyTorch, scikit-learn). The serving dependencies are listed in `requirements-api.txt`.
 
-The ONNX artifacts are exported from the original model files with `util/export_models_to_onnx.py`; `util/verify_onnx_parity.py` verifies an export against the original model. Both tools run in the training environment. The model registry is defined in `inference/registry.py`, the API image (which contains no training framework) in the `Dockerfile`.
+The ONNX artifacts are exported from the original model files with `util/export_models_to_onnx.py`; `util/verify_onnx_parity.py` verifies an export against the original model. Both tools run in the training environment. The model registry is defined in `inference/registry.py`, the API image (which contains no training framework) in the `Dockerfile`. Models may be stored zstd-compressed at rest (`<model>.onnx.zst`); the registry loads them transparently.
 
 # Data Preparation
 

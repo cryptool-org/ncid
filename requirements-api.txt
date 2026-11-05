@@ -7,3 +7,5 @@ onnxruntime
 # shared pins (must match requirements.txt)
 numpy==1.26.4
 py_mini_racer==0.6.0
+# zstd-compressed model files at rest (inference/registry.py, inference/onnx_model.py)
+zstandard

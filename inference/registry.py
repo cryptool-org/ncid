@@ -26,6 +26,9 @@ MODEL_REGISTRY = {
 def load_model(name, model_dir=ONNX_MODEL_DIR):
     """Load a single ONNX model by its registry name.
 
+    If a zstd-compressed variant `<filename>.zst` exists next to the plain
+    ONNX file, it is preferred, so models can be stored compressed at rest.
+
     Raises
     ------
     ValueError
@@ -34,7 +37,10 @@ def load_model(name, model_dir=ONNX_MODEL_DIR):
     if name not in MODEL_REGISTRY:
         raise ValueError(f"Unknown model: {name}. Known models: {sorted(MODEL_REGISTRY)}")
     filename, input_kind = MODEL_REGISTRY[name]
-    return OnnxModel(os.path.join(model_dir, filename), name, input_kind)
+    path = os.path.join(model_dir, filename)
+    if os.path.exists(path + ".zst"):
+        path = path + ".zst"
+    return OnnxModel(path, name, input_kind)
 
 
 def load_all(models_dir=ONNX_MODEL_DIR):
@@ -50,9 +56,9 @@ def load_all(models_dir=ONNX_MODEL_DIR):
     for name in MODEL_REGISTRY:
         filename, _ = MODEL_REGISTRY[name]
         path = os.path.join(models_dir, filename)
-        if not os.path.exists(path):
+        if not (os.path.exists(path) or os.path.exists(path + ".zst")):
             raise FileNotFoundError(
-                f"ONNX model not found: {path}. "
+                f"ONNX model not found: {path}[.zst]. "
                 f"Deploy the model artifacts into {models_dir} "
                 f"(export them with util/export_models_to_onnx.py).")
         models[name] = load_model(name, models_dir)

@@ -55,11 +55,26 @@ class OnnxModel:
         self._session = None
 
     def _get_session(self):
-        """Lazily create the ONNX Runtime session."""
+        """Lazily create the ONNX Runtime session.
+
+        Model files stored zstd-compressed (`.zst` suffix, e.g.
+        `model.onnx.zst`) are decompressed in memory; the raw ONNX bytes are
+        handed to ONNX Runtime directly, so no temporary file is needed.
+        """
         if self._session is None:
             import onnxruntime as ort
-            self._session = ort.InferenceSession(self.onnx_path)
+            model_bytes = self._read_model_bytes()
+            self._session = ort.InferenceSession(model_bytes)
         return self._session
+
+    def _read_model_bytes(self):
+        """Read the model file, decompressing zstd archives in memory."""
+        if self.onnx_path.endswith(".zst"):
+            import zstandard
+            with open(self.onnx_path, "rb") as f:
+                return zstandard.ZstdDecompressor().decompress(f.read())
+        with open(self.onnx_path, "rb") as f:
+            return f.read()
 
     def load_model(self):
         """No-op for compatibility with ensembles that call `load_model` on

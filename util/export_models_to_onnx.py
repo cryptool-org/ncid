@@ -152,6 +152,8 @@ def export_scikit(model, output_path, opset, input_shape):
     from skl2onnx import convert_sklearn
     from skl2onnx.common.data_types import FloatTensorType
 
+    from util.strip_zero_class_weights import strip_zero_class_weights
+
     if input_shape is None:
         n_features = getattr(model, "n_features_in_", None)
         if n_features is None:
@@ -165,8 +167,15 @@ def export_scikit(model, output_path, opset, input_shape):
 
     initial_types = [("input", FloatTensorType(list(input_shape)))]
     onnx_model = convert_sklearn(model, initial_types=initial_types, target_opset=opset)
+    # Tree ensembles store one weight per (leaf, class) pair, almost all of
+    # them zero for multi-class forests. Stripping them is lossless (they add
+    # nothing to the tree sums) and shrinks the artifact dramatically.
+    stripped = strip_zero_class_weights(onnx_model)
     with open(output_path, "wb") as f:
         f.write(onnx_model.SerializeToString())
+    if stripped:
+        print(f"Stripped {stripped:,} zero-weight class entries from the "
+              f"tree ensemble.")
 
 
 def main():

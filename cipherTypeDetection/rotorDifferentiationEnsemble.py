@@ -1,9 +1,7 @@
 import numpy as np
-from torch.nn import Module
-import cipherTypeDetection.config as config
+from cipherTypeDetection.constants import CIPHER_TYPES, ROTOR_CIPHER_TYPES
 from cipherTypeDetection.featureCalculations import calculate_rotor_statistics
-from cipherTypeDetection.config import Backend
-from cipherTypeDetection.models.predictionHelper import predict_ffnn, predict_lstm, predict_cnn, predict_transformer
+from cipherTypeDetection.preprocessing import pad_ciphertext
 
 class RotorDifferentiationEnsemble:
     """
@@ -29,18 +27,17 @@ class RotorDifferentiationEnsemble:
             The architecture of the general model used to predict all supported 
             cipher types.
         general_model :
-            The model used to predict all supported cipher types.
+            The model used to predict all supported cipher types. It is a
+            model adapter that implements the prediction protocol, i.e. it
+            provides the method
+            `predict(statistics, ciphertexts, batch_size, verbose)`.
         rotor_only_model :
             The model used to differentiate between the rotor ciphers. This model
-            should only be trained on the rotor ciphers.
+            should only be trained on the rotor ciphers and provides the
+            scikit-learn style method `predict_proba(statistics)`.
         """
         self._general_architecture = general_model_architecture
         self._general_model = general_model
-        self._general_model_backend = (
-            Backend.PYTORCH 
-            if isinstance(self._general_model, Module) 
-            else Backend.KERAS
-        )
         self._rotor_only_model = rotor_only_model
 
     def predict(self, statistics, ciphertexts, batch_size, verbose=0):
@@ -66,33 +63,16 @@ class RotorDifferentiationEnsemble:
         list
             A list of predictions for each provided statistic (or ciphertext).
         """
-        # Get rotor cipher labels from config
-        first_rotor_cipher_index = config.CIPHER_TYPES.index(config.ROTOR_CIPHER_TYPES[0])
+        # Get rotor cipher labels
+        first_rotor_cipher_index = CIPHER_TYPES.index(ROTOR_CIPHER_TYPES[0])
         rotor_cipher_labels = range(first_rotor_cipher_index, 
-                                    first_rotor_cipher_index + len(config.ROTOR_CIPHER_TYPES))
+                                    first_rotor_cipher_index + len(ROTOR_CIPHER_TYPES))
         
         # Perform full prediction for all ciphers
-        architecture = self._general_architecture
-        backend = self._general_model_backend
-        if architecture == "FFNN":
-            predictions = predict_ffnn(self._general_model, statistics, batch_size, backend)
-        elif architecture in ("DT", "NB", "RF", "ET", "SVM", "kNN"):
-            predictions = self._general_model.predict_proba(statistics)
-        elif architecture == "Ensemble":
-            predictions = self._general_model.predict(statistics, 
-                                                      ciphertexts, 
-                                                      batch_size=batch_size, 
-                                                      verbose=verbose)
-        elif architecture == "LSTM":
-            predictions = predict_lstm(self._general_model, ciphertexts, batch_size, backend)
-        elif architecture == "Transformer":
-            predictions = predict_transformer(self._general_model, ciphertexts, batch_size)
-        elif architecture == "CNN":
-            predictions = predict_cnn(self._general_model, ciphertexts, batch_size)
-        else:
-            predictions = self._general_model.predict(statistics, 
-                                                      batch_size=batch_size, 
-                                                      verbose=verbose)
+        predictions = self._general_model.predict(statistics, 
+                                                  ciphertexts, 
+                                                  batch_size=batch_size, 
+                                                  verbose=verbose)
 
         # Adapt each prediction with the more specific predictions of the
         # rotor ciphers provided by the `rotor_only_model`. 
@@ -104,11 +84,8 @@ class RotorDifferentiationEnsemble:
                 # Use _rotor_only_model to correctly differentiate between the different rotor ciphers
 
                 # Append ciphertext to itself. This improves the reliablity of the results.
-                while len(ciphertext) < 1000:
-                    ciphertext = np.concatenate((ciphertext, ciphertext), axis=0)
-                    # ciphertext = ciphertext + ciphertext
                 # Limit line to at most 1000 characters to limit the execution time
-                ciphertext = ciphertext[:1000]
+                ciphertext = pad_ciphertext(ciphertext)
 
                 rotor_cipher_statistics = calculate_rotor_statistics(ciphertext)
                 rotor_predictions = self._rotor_only_model.predict_proba([rotor_cipher_statistics])[0]

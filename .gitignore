@@ -18,3 +18,6 @@ cipherTypeDetection/run_trainings.sh
 data/*tensorboard_logs/
 data/_parameters.txt
 
+# model artifacts are deployed out-of-band (export with util/export_models_to_onnx.py)
+data/models/
+

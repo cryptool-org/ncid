@@ -1,5 +1,4 @@
 import numpy as np
-from cipherTypeDetection.models.predictionHelper import predict_ffnn, predict_lstm, predict_cnn, predict_transformer
 
 f1_ffnn = [0.85802469, 0.71601017, 1., 0.99176076, 0.2358263, 0.77622378, 0.70844478, 0.96519285, 0.94650687, 0.85040917, 0.70607827, 0.78005115, 0.84944426, 0.99756839, 0.97485951, 0.95828066, 0.94724363, 0.9211165, 0.99908898, 0.95622688, 0.99787557, 0.74629137, 0.93963723, 0.50773994, 0.95047098, 0.99098016, 0.81281534, 1., 0.99939357, 0.94468614, 0.74026438, 0.80489161, 0.99756691, 0.98346859, 0.96463596, 0.54026417, 0.98918919, 0.2, 0.11942675, 0.14091471, 0.14470678, 0.12706072, 0.99969651, 0.55685131, 0.0059312, 0.99969669, 0.68258591, 0.79946255, 0.49982462, 0.94923858, 0.78894205, 0.8, 0.95987842, 0.87563309, 0.20748299, 0.11743451, 0.04731679, 0.41069723, 0.32477514, 0.11273486, 0.16886064]
 f1_transformer = [0.03043478, 0.69008264, 1., 0.99455206, 0.58704225, 0.73749569, 0.73001076, 0.95184968, 0.57126168, 0.3715415, 0.7044335, 0.86148552, 0.9545597, 0.99301973, 0.98642534, 0.92614159, 0.99266952, 0.91793838, 0.99908898, 0.91535492, 0.98880484, 0.9969697, 0.98505642, 0.11973019, 0.3258499, 0.99817961, 0.82288401, 1., 0.99969651, 0.99516616, 0.77780972, 0.7008872, 0.49159664, 0.60615959, 0.91304348, 0.79020173, 0.97655768, 0.2, 0.1637931, 0.22581529, 0.18894137, 0.09254089, 1., 0.15538462, 0.27428112, 0.96774194, 0.6044648, 0.48468399, 0.68386023, 0.52110977, 0.99574985, 0.84159378, 0.95633188, 0.87079446, 0.29268293, 0.33854521, 0.04137931, 0.38119935, 0.24557878, 0.06648794, 0.15943396]
@@ -37,12 +36,18 @@ class EnsembleModel:
             "RF": [f1_rf, accuracy_rf, recall_rf, precision_rf, mcc_rf],
             "NB": [f1_nb, accuracy_nb, recall_nb, precision_nb, mcc_nb]
         }
+        # The members of this ensemble are model adapters. An adapter provides
+        # the attributes `architecture` and the method
+        # `predict(statistics, ciphertexts, batch_size, verbose)`.
         self.model_files = model_files
         self.models = [None] * len(self.model_files)
         self.strategy = strategy
 
         for i, file in enumerate(model_files):
-            self.models[i] = file.load_model()
+            if hasattr(file, 'load_model'):
+                self.models[i] = file.load_model()
+            else:
+                self.models[i] = file
 
         for key in self.statistics_dict:
             statistics = self.statistics_dict[key]
@@ -86,22 +91,8 @@ class EnsembleModel:
     def predict(self, statistics, ciphertexts, batch_size, verbose=0):
         predictions = []
         for index, model_file in enumerate(self.model_files):
-            model = self.models[index]
-            architecture = model_file.architecture
-            if architecture == "FFNN":
-                prediction = predict_ffnn(model, statistics, batch_size, model_file.backend)
-                predictions.append(prediction)
-            elif architecture == "LSTM":
-                prediction = predict_lstm(model, ciphertexts, batch_size, model_file.backend)
-                predictions.append(prediction)
-            elif architecture == "CNN":
-                prediction = predict_cnn(model, ciphertexts, batch_size)
-                predictions.append(prediction)
-            elif architecture == "Transformer":
-                prediction = predict_transformer(model, ciphertexts, batch_size)
-                predictions.append(prediction)
-            elif architecture in ("DT", "NB", "RF", "ET"):
-                predictions.append(model.predict_proba(statistics))
+            prediction = model_file.predict(statistics, ciphertexts, batch_size, verbose)
+            predictions.append(prediction)
 
         return self._scale_predictions(predictions)
 

@@ -124,6 +124,12 @@ To see all options of `eval.py`, run the `--help` or `-h` command.
 python3 eval.py --help
 ```
 
+# API
+
+The HTTP API is implemented in `api.py` and is served with `uvicorn` (see [CrypTool-Online NCID](https://www.cryptool.org/cto/ncid)). Since the models are served as ONNX graphs via [ONNX Runtime](https://onnxruntime.ai/), the API runtime does **not** need any training framework (TensorFlow, PyTorch, scikit-learn). The serving dependencies are listed in `requirements-api.txt`.
+
+The ONNX artifacts are exported from the original model files with `util/export_models_to_onnx.py`; `util/verify_onnx_parity.py` verifies an export against the original model. Both tools run in the training environment. The model registry is defined in `inference/registry.py`, the API image (which contains no training framework) in the `Dockerfile`. Models may be stored zstd-compressed at rest (`<model>.onnx.zst`); the registry loads them transparently.
+
 # Data Preparation
 
 Note: The following steps are only needed when the automatic downloading and preprocessing steps of the `train.py` or `eval.py` scripts fail or other data sources are wanted.
@@ -164,7 +170,7 @@ python3 generateCalculatedFeatures.py --dataset_workers=50 --min_len=100 --max_l
 
 # Unit-Tests
 
-Multiple Unit-Tests ensure the functionality of the implemented ciphers and the TextLine2CipherStatisticsDataset. 
+Multiple Unit-Tests ensure the functionality of the implemented ciphers and the TextLine2CipherStatisticsDataset. Additionally, `unit/inference/frameworkIndependenceTest.py` guards that the serving path (`api.py` and the `inference` package) stays free of training frameworks. 
 
 Every test case can be executed by using following command in the main directory:
 

@@ -1,5 +1,5 @@
 from cipherImplementations.cipher import Cipher, generate_random_list_of_unique_digits, OUTPUT_ALPHABET
-from util.utils import remove_unknown_symbols, encrypt_morse, decrypt_morse, morse_codes
+from util.textutils import remove_unknown_symbols, encrypt_morse, decrypt_morse, morse_codes
 import numpy as np
 import random
 

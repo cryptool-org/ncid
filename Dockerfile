@@ -9,13 +9,12 @@ ENV PIP_ROOT_USER_ACTION=ignore
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt /opt/requirements.txt
-RUN sed -i -re 's/^tensorflow=/tensorflow-cpu=/g' /opt/requirements.txt
-
+# The API serves ONNX models via ONNX Runtime only, so the runtime needs no
+# training framework (TensorFlow, PyTorch, scikit-learn).
+COPY requirements-api.txt /opt/requirements-api.txt
 RUN set -ex \
     && python -m pip install --no-cache-dir --upgrade pip setuptools \
-    && python -m pip install --no-cache-dir -r /opt/requirements.txt \
-    && python -m pip install --no-cache-dir "fastapi" "uvicorn[standard]"
+    && python -m pip install --no-cache-dir -r /opt/requirements-api.txt
 
 # hardened runtime image (DHI, Python 3.11, Debian 13/Trixie)
 # ============================================================

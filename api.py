@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, Any, List
 
 import cipherTypeDetection.constants as constants
+from cipherImplementations.cipher import OUTPUT_ALPHABET
 from cipherTypeDetection import predict as cipherPredict
 from cipherTypeDetection.ensembleModel import EnsembleModel
 from cipherTypeDetection.rotorDifferentiationEnsemble import RotorDifferentiationEnsemble
@@ -82,6 +83,44 @@ class APIResponse(BaseModel):
     error_msg: Optional[str] = None
 
 
+# The alphabet the models operate on (see cipherImplementations.cipher).
+ALLOWED_CIPHERTEXT_CHARS = set(OUTPUT_ALPHABET.decode("latin-1"))
+
+
+def normalize_and_validate_ciphertext(ciphertext):
+    """Normalize the ciphertext for the models.
+
+    Ciphertexts are commonly written in uppercase (ACA convention), while the
+    models operate on the lowercase output alphabet, so the case is
+    normalized. Characters that cannot be mapped into the output alphabet
+    cannot be processed by the feature engineering, so they are rejected with
+    a human-readable error.
+
+    Parameters
+    ----------
+    ciphertext : str
+        The raw ciphertext from the request.
+
+    Returns
+    -------
+    str
+        The normalized ciphertext, ready to be encoded and predicted.
+
+    Raises
+    ------
+    ValueError
+        If the ciphertext contains unsupported characters.
+    """
+    normalized = ciphertext.lower()
+    unsupported = sorted(set(normalized) - ALLOWED_CIPHERTEXT_CHARS)
+    if unsupported:
+        raise ValueError(
+            "The ciphertext contains unsupported characters: %s. "
+            "Allowed are a-z, 0-9, '#' and space."
+            % ", ".join(repr(c) for c in unsupported))
+    return normalized
+
+
 @app.exception_handler(Exception)
 async def exception_handler(request, exc):
     """Define exception response format."""
@@ -106,6 +145,18 @@ async def evaluate_single_line_ciphertext(ciphertext: str, architecture: List[st
         return error.response
 
     try:
+        # Normalize the case of the ciphertext and reject input that the
+        # feature engineering cannot process (would otherwise crash with a
+        # 500 on e.g. uppercase-only or punctuation-containing input).
+        try:
+            ciphertext = normalize_and_validate_ciphertext(ciphertext)
+        except ValueError as error:
+            return JSONResponse(
+                {"success": False,
+                 "payload": None,
+                 "error_msg": str(error)},
+                status_code=status.HTTP_400_BAD_REQUEST)
+
         # only use architectures that can predict aca ciphers
         architectures = [architecture
             for architecture in architectures
@@ -136,7 +187,6 @@ async def evaluate_single_line_ciphertext(ciphertext: str, architecture: List[st
 
         prediction = cipherPredict.predict_ciphertext_line(
             ciphertext.encode(), model, cipher_names, batch_size=128)
-
         # Convert to native floats so that the response is JSON serializable.
         prediction = {cipher_type: float(value) for cipher_type, value in prediction.items()}
 
